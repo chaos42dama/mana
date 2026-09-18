@@ -115,7 +115,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
-3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测）→ 逐 lane `herdr worktree create`，并以 `--env MANA_WORKER=1` + `-- --exclude-tools ask_question` 派发。
+3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测）→ 从 `~/.pi/agent/settings.json` 读出最后配置成的默认线路（`provider/model`）→ 逐 lane `herdr worktree create`，并以 `--env MANA_WORKER=1` + `-- --model <provider>/<model> --exclude-tools ask_question` 派发（`--model` 显式钉定，不吃 pane 环境默认）。
 4. 监督循环：重读 state → 探测工人 → `DONE` 后重跑 acceptance → 打回或 verified → 回收 pane。
 5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
@@ -144,6 +144,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 - 守卫 `exit 0` 之前绝不合并。
 - 绝不把半成品 lane 报告为完成。
 - 永不把等待人类的 UI 当控制流：pane 内出现确认框即视为配置漂移，先查因，不靠 `send-keys` 顶过去。
+- 永不省略工人 `--model`：工人线路一律显式钉定为 run 启动时读到的默认线路，不吃 pane 的环境默认，也不在 run 中途换线。
 
 ---
 
@@ -198,7 +199,7 @@ Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker
 - `/mana how|why|teach|recall <scope>` — **context**: read-only Q&A.
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.
 
-Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow.
+Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow, never omit the worker `--model` (routes are pinned explicitly to the default read at run start, never inherited from the pane).
 
 ## License
 
