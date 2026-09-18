@@ -115,7 +115,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
-3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测）→ 从 `~/.pi/agent/settings.json` 读出最后配置成的默认线路（`provider/model`）→ 逐 lane `herdr worktree create`，并以 `--env MANA_WORKER=1` + `-- --model <provider>/<model> --exclude-tools ask_question` 派发（`--model` 显式钉定，不吃 pane 环境默认）。
+3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测）→ **先读默认配置**：`WORKER_MODEL=$(jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json)`（当前 → `omniroute/omni6gpt`）→ 逐 lane `herdr worktree create`，并把读到的值**追加进 `--model`** 派发：`--env MANA_WORKER=1` + `-- --model "$WORKER_MODEL" --exclude-tools ask_question`（显式钉定，不吃 pane 环境默认）。
 4. 监督循环：重读 state → 探测工人 → `DONE` 后重跑 acceptance → 打回或 verified → 回收 pane。
 5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 

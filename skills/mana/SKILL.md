@@ -81,8 +81,14 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 ## §2 dispatch
 
-- 每条需持续会话的 lane：先从当前 orchestrator pane 用 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 创建**下方横切**的本 run 专属 pane（`--env` 落在 pane 的 shell 上，pi 继承；不得用 `--direction right`）。读取返回的 `workspace_id`、`pane_id` 后，执行 `herdr agent start <agent-name> --kind pi --pane <pane-id> -- --model <state.worker_model> --exclude-tools ask_question`（`--` 之后是 pi 原生参数；`--model` 收 `provider/id` 形式，当前 `omniroute/omni6gpt`）。`<agent-name>` 和 branch 必须唯一，写入 state。
-- **工人线路必须显式钉定，不得吃 pane 的环境默认**：每条 lane 的 `--model` 一律显式给出 §1.4 读出的 `state.worker_model`，禁止省略后依赖 pane 内 `~/.pi/agent/settings.json` 的默认值——pane 是长生命周期 shell，模型目录/默认线路可能被 `pi-model-manager` 之类在会话中途切换，届时跑的就已不是 CTO 批准的线路。每条 lane 的 state 记 `model: <provider>/<id>`，启动后 `read` 工人 pane 的启动 banner（`pi --list-models` 亦可）确认解析到的线路与 `state.worker_model` 一致；不一致或 `--model` 解析失败 → 该 lane `blocked`，不得带未知线路继续跑。
+先读默认配置，再把读到的值追加进 `--model`：
+
+```bash
+WORKER_MODEL=$(jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json)   # 先读：当前 → omniroute/omni6gpt
+```
+
+- 每条需持续会话的 lane：先从当前 orchestrator pane 用 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 创建**下方横切**的本 run 专属 pane（`--env` 落在 pane 的 shell 上，pi 继承；不得用 `--direction right`）。读取返回的 `workspace_id`、`pane_id` 后，把上面读到的值追加进 `--model` 再启动：`herdr agent start <agent-name> --kind pi --pane <pane-id> -- --model "$WORKER_MODEL" --exclude-tools ask_question`（`--` 之后是 pi 原生参数；`$WORKER_MODEL` 取 `provider/id` 形式，当前为 `omniroute/omni6gpt`，与 §1.4 写入的 `state.worker_model` 同值）。`<agent-name>` 和 branch 必须唯一，写入 state。
+- **工人线路必须显式钉定，不得吃 pane 的环境默认**：每条 lane 的 `--model` 一律追加上面读到的 `$WORKER_MODEL`（= §1.4 写入的 `state.worker_model`），禁止省略后依赖 pane 内 `~/.pi/agent/settings.json` 的默认值——pane 是长生命周期 shell，模型目录/默认线路可能被 `pi-model-manager` 之类在会话中途切换，届时跑的就已不是 CTO 批准的线路。每条 lane 的 state 记 `model: <provider>/<id>`，启动后 `read` 工人 pane 的启动 banner（`pi --list-models` 亦可）确认解析到的线路与 `$WORKER_MODEL` 一致；不一致或 `--model` 解析失败 → 该 lane `blocked`，不得带未知线路继续跑。
 - 工人侧三处扩展（§0.7）由 `MANA_WORKER=1` 自动接管，brief **不再需要**逐条交代 `PI_SKIP_REVIEW=1` 之类的绕过技巧；brief 只写业务边界。
 - Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。
 - 工人交付：完成所有工作后只输出一个机器可解析的最终状态行，且**首字符必须为** `DONE:` 或 `BLOCKED:`；随后可列证据（命令输出/路径/diff 摘要）。未出现该前缀的自然语言“完成”不是终态，orchestrator 必须 `read` 后追问，不得回收。
