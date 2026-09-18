@@ -13,13 +13,17 @@ Mana 是一个 OMP（oh-my-pi）技能：把一个 OMP session 变成 **orchestr
 3. **lane 永不 push/merge**：发布权只在 orchestrator，工人在隔离 worktree 里干活。
 4. **tier 由机器判定**：CTO 一次写入 `tier_grants`（路径 glob + 可选 toml 键前缀 + 守卫命令），守卫 `exit 0` 即自主 landing；越界则预检就停，不"跑完再问"。
 5. **工人必须回收**：验收后关闭专属 pane，agent/pane 双 `not_found` 才算完成。
+6. **两端都不停在选择上**：工人侧 `MANA_WORKER=1` 关掉 pane 内全部交互门（提问、危险命令确认、pre-commit 审查），orchestrator 侧规则自决 + `ask` 超时兜底；等待人类的 UI 在无人的 pane 里等于死锁。
 
 ## 仓库结构
 
 ```
 skills/mana/SKILL.md          # 技能本体：§0 不变量 + intake/context/run/dispatch/监督/landing/报告
 extensions/safe-guard.ts      # OMP 扩展：危险命令确认 + MANA_AUTONOMOUS 自主开关 + 受保护路径
-checks/safe-guard.check.mjs   # safe-guard 自检（5 组断言）
+extensions/pi/mana-worker.ts  # Pi 扩展：MANA_WORKER=1 下封禁交互式提问（内联自检）
+extensions/pi/safe-guard.ts   # Pi 扩展：MANA_WORKER=1 下危险命令只告警、受保护路径硬阻断
+extensions/pi/precommit-review.ts  # Pi 扩展：MANA_WORKER=1 下关闭 pre-commit 审查门
+checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
 scripts/check-mana-grant-scope.py  # tier 授权守卫：路径 glob + toml 键前缀判定（--self-test 自带）
 ```
 
@@ -73,7 +77,22 @@ python3 scripts/check-mana-grant-scope.py --self-test
 # ✓ self-test ok
 ```
 
-### 4. 开启自主模式（一次性授权）
+### 4. 安装工人侧（Pi）扩展
+
+```bash
+mkdir -p ~/.pi/agent/extensions
+cp mana/extensions/pi/*.ts ~/.pi/agent/extensions/
+```
+
+自检（需要 Bun）：
+
+```bash
+PI_MANA_WORKER_SELFTEST=1 bun mana/extensions/pi/mana-worker.ts
+PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
+PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
+```
+
+### 5. 开启自主模式（一次性授权）
 
 ```bash
 export MANA_AUTONOMOUS=1      # 建议写进 ~/.bashrc
@@ -96,7 +115,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
-3. 预检（herdr/Pi/认证/CI/MANA_AUTONOMOUS/tier 预测）→ 逐 lane `herdr worktree create` + `herdr agent start --kind pi` 派发。
+3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测）→ 逐 lane `herdr worktree create`，并以 `--env MANA_WORKER=1` + `-- --exclude-tools ask_question` 派发。
 4. 监督循环：重读 state → 探测工人 → `DONE` 后重跑 acceptance → 打回或 verified → 回收 pane。
 5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
@@ -124,6 +143,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 - 工人请求 push/PR 一律上报，绝不批准。
 - 守卫 `exit 0` 之前绝不合并。
 - 绝不把半成品 lane 报告为完成。
+- 永不把等待人类的 UI 当控制流：pane 内出现确认框即视为配置漂移，先查因，不靠 `send-keys` 顶过去。
 
 ---
 
@@ -140,6 +160,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 3. **Lanes never push or merge**: publishing stays with the orchestrator; workers are isolated in worktrees.
 4. **Tier is machine-judged**: `tier_grants` (path globs + optional toml key prefixes + guard command); guard `exit 0` ⇒ autonomous landing, otherwise the run stops at preflight.
 5. **Workers are always reclaimed**: after acceptance, the pane is closed and agent/pane must both report `not_found`.
+6. **Neither end stalls on a choice**: worker-side `MANA_WORKER=1` shuts every interactive gate inside the pane (questions, dangerous-command confirmation, pre-commit review), orchestrator-side self-decides by rule with an `ask` timeout fallback; a human-waiting UI in an unmanned pane is a deadlock.
 
 ## Install
 
@@ -158,11 +179,18 @@ mkdir -p scripts
 cp mana/scripts/check-mana-grant-scope.py scripts/
 python3 scripts/check-mana-grant-scope.py --self-test
 
-# 4. Autonomous mode (one-shot authorization)
+# 4. Worker-side (Pi) extensions
+mkdir -p ~/.pi/agent/extensions
+cp mana/extensions/pi/*.ts ~/.pi/agent/extensions/
+PI_MANA_WORKER_SELFTEST=1 bun mana/extensions/pi/mana-worker.ts
+PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
+PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
+
+# 5. Autonomous mode (one-shot authorization)
 export MANA_AUTONOMOUS=1
 ```
 
-Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`).
+Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`).
 
 ## Usage
 
@@ -170,7 +198,7 @@ Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent, run from insid
 - `/mana how|why|teach|recall <scope>` — **context**: read-only Q&A.
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.
 
-Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete.
+Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow.
 
 ## License
 
