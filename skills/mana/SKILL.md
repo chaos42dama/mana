@@ -16,7 +16,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 3. **代码 lane 必须 worktree 隔离并由 Pi 执行**。用 `herdr worktree create` 创建本 run 工作区，在其专属 pane 执行 `herdr agent start <name> --kind pi`；不得用 OMP `task`/`workpool` 充当代码工人。只读 lane 同样优先 Pi pane；只有一次性无会话调查才可用 OMP `scout`。
 4. **lane 永不 push/merge**。发布权只在 orchestrator。
 5. **永不 force-push、永不碰非本 run 创建的分支/worktree/会话**。
-6. **一次授权覆盖已批准的 run，tier 由机器判定**。state 写入 `authorization: {issue, approved_at, scope, autonomous_landing: true|false, tier_grants: [{patterns: [路径 glob], max_tier, guard, approved_at}]}`。
+6. **一次授权覆盖已批准的 run，tier 由机器判定**（前置：当前仓库已满足「仓库前置条件」节，否则只走 context/intake）。state 写入 `authorization: {issue, approved_at, scope, autonomous_landing: true|false, tier_grants: [{patterns: [路径 glob], max_tier, guard, approved_at}]}`。
    - **`autonomous_landing` 默认 `true`**：CTO 一句 `/mana run #<issue>` 即为逐 run 授权（含“自主 PR→CI→merge→清理”），不再需要长参数。需要保留人工 merge 门时才显式 `/mana run #<issue> --manual-landing`（state 写 `false`）。
    - 默认 true 只免掉「逐次问是否自主落地」这一层，**不改变 tier 判定**：仍须被某条 `tier_grants` 完全覆盖且守卫 `exit 0` 才 landing；未覆盖的 tier B 照旧在 §1.4 预检停。
    - `autonomous_landing=true` 时 tier 不靠人肉判断：变更集被某条 `tier_grants` 完全覆盖、且该条 `guard` 命令 `exit 0` → 该 lane 记 tier A，直接 landing，不再问 CTO。
@@ -32,6 +32,36 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - 因此 lane 内的 VCS 变更、提交和本地 branch 清理应直接执行；不得把 Herdr `blocked` 当常规控制流。**run 中若仍出现确认 UI，视为配置漂移**：orchestrator 先 `get/read` 查因（首要检查 pane 内 `printenv MANA_WORKER` 是否为 `1`），记录原文并在 state 记 `blocker`；只有当屏幕命令、目标和影响完全匹配 state 中已批准 lane 的本地 worktree 操作时才 `herdr agent send-keys <name> enter`。远端删除、push/merge、共享只读资源、密钥、认证、支付、main/DBA 重写一律 `blocked`。不得盲发 `enter`；宿主强制阻止的确认不是可绕过的授权门，必须记录其原文并上报。
 8. **Pi worker 必须回收**。lane 验收后，orchestrator 关闭它创建的专属 pane：`herdr pane close <pane-id>`；随后 `herdr agent get <name>` 和 `herdr pane get <pane-id>` 必须均为 `not_found`。未回收不得报告 run 完成。
 9. **orchestrator 自身同样不得停在选择上**。自主 run 内：不调用 `ask`；需要决策时按同一条规则自决（有 `recommended` 取之，否则取自评最优首项），并把结论写进 `state.decision_log`；宿主兜底是 `~/.omp/agent/config.yml` 的 `ask: {timeout: 30}`（超时自动选中 recommended，无则首项；plan mode 下不生效）。只有 tier 判定/授权边界/§0.6 红线才上报 CTO，且一个 run 最多汇总问一次。
+
+### run 单 owner 执行入口
+
+- 任何 run 的 state 写入、Issue 修改、Herdr mutation、push/PR/merge/reclaim 前，orchestrator 必须先启动持锁执行会话。锁覆盖整个 run，不是逐条命令加锁。read-only recall/context 不需要锁。
+- `RUN_DIR` 必须是 **canonical 主仓路径** `<主仓>/.mana/<run-id>`，所有会话与 worktree 共用该目录；禁止在各 worktree 下另建同名 run 分裂锁。新 run 只允许先创建这个目录，随后先取锁再初始化 state；旧 run 必须使用既有目录。入口要求目录存在，并以 `Path.resolve(strict=True)` 规范化路径。
+- 启动下列持久 shell，让整个 run 的后续命令都发往这一个 shell（主仓与 run 路径替换为实际绝对路径，OWNER 使用可读会话标识）：
+
+  ```sh
+  python3 <repo>/scripts/mana-run-lock.py <repo>/.mana/<run-id> <session-id> -- /bin/bash --noprofile --norc
+  ```
+
+  （`<repo>` = 当前主仓绝对路径；该脚本是仓库前置，见「仓库前置条件」。）
+
+  后续必须发送到这一个 shell；state 的读取、RMW 和原子替换，以及所有上述 mutation 命令均在此执行。不得另开 `bash`、直接用 `write/edit` 工具或另一个会话绕过。启动失败不得继续发送 mutation；保持该 shell 活到 run 全部操作完成。
+- 固定锁文件是 `RUN_DIR/orchestrator.lock`；`fcntl.flock(LOCK_EX|LOCK_NB)` 竞争失败返回 **73**，不会执行子命令。第二会话只能只读或等待显式接管：原 owner 停止 mutation、退出执行会话，确认后代结束，再由新 owner 成功取锁并重读 state。**严禁删除、替换 lock 文件来解决冲突**，否则 inode 分裂会产生双 owner。
+- 入口在同一进程 `os.execvpe`，显式设置锁 FD 可继承；shell `exec` 保留锁，无额外 wrapper。正常退出、信号或异常结束时，最后一个持有该 FD 的进程结束才释放锁；exec 失败自动关闭 FD，命令不存在返回 127，其余 exec 错误返回 126。命令退出码原样保留。
+- fork 后代会继承锁：后台 child 仍持 FD 时，父进程死亡也不能提前接管。持锁 shell 不得提前关闭 FD；命令若主动关闭未知 FD（例如 `close_fds`）则不能代替原 shell 承担锁生命周期。避免脱离会话的后台 mutation，退出前等待后代完成；不能仅凭 PID 消失或元信息判断可接管。
+- `flock` 仅提供合作进程互斥，不是同 UID 安全沙箱，不能阻止直接工具写入。锁文件中的 owner/PID/run_dir 仅用于诊断，不是权限依据，也不是状态库。
+- 历史 state/Issue 的修正由 Main 负责：保留原始 `observed_claim`，追加 `correction` 和 `source` 证据；不得把旧 claim 静默改成已验证事实。本入口只实现单 owner 锁，不修历史数据。
+
+### 仓库前置条件（新仓库要用 /mana run 前逐项核对）
+
+全局技能 ≠ 全局可 run。每个仓库独立满足以下前置，缺项只走 context/intake：
+
+1. `scripts/mana-run-lock.py`：run 单 owner 持锁入口（含 `test_mana_run_lock.py`；本仓库未自带，需自备）。
+2. `scripts/check-mana-grant-scope.py`：tier 守卫（本仓库自带，`--self-test` 先跑通）。
+3. `.git/info/exclude` 含 `.mana/`；`.gitignore` 未跟踪 run 产物。
+4. 该仓 AGENTS.md 明确：受保护分支、只读上游区、`tier_grants` 红线的仓内定义。
+5. CTO 针对该仓的 `tier_grants` 批准（常备块按仓分节维护）。
+6. 工具链就绪：`herdr`、forge CLI 认证、CI 通道、`MANA_AUTONOMOUS=1`、工人侧三处扩展自检绿（§0.7）。
 
 ### tier_grants 示例
 
@@ -74,7 +104,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 ### run（已批准 Issue）
 
-1. 读 Issue 全文与已有评论（forge CLI），确认已批准的子任务分解与授权范围：`autonomous_landing` 缺省为 `true`，仅 `--manual-landing` 时为 `false`，并写入 state；缺任一项 → 只回 intake，不 dispatch。
+1. 先按「run 单 owner 执行入口」启动持锁 shell，再执行以下写入与 mutation。读 Issue 全文与已有评论（forge CLI），确认已批准的子任务分解与授权范围：`autonomous_landing` 缺省为 `true`，仅 `--manual-landing` 时为 `false`，并写入 state；缺任一项 → 只回 intake，不 dispatch。
 2. 把可检查的终态写入 state 的 `goal` 字段，并在当前 OMP runtime 暴露 `/goal` 或 goal tool 时同步 arm；未暴露时 state + Herdr 监督循环仍是权威续航机制。终态未满足不得因 worker 结束而停机。
 3. 写 lanes 表进 state.json：`{run_id, base_ref, authorization{...,tier_grants}, goal, lanes: [{id, kind: readonly|code, target, acceptance: [命令或可观察断言], tier, tier_grant, guard_output, branch, workspace_id, pane_id, agent_name, status: planned|running|verifying|verified|reclaimed|landed|blocked|failed}]}`。`tier_grant` 记命中的 grant 索引，`guard_output` 记守卫命令的实际输出摘要。
 4. 预检 `HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出**最后配置成的默认线路与模型**写入 `state.worker_model`：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（当前 `omniroute/omni6gpt`；缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。
@@ -139,7 +169,7 @@ WORKER_MODEL=$(jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settin
 | orchestrator 不阻塞（方案选择） | 技能规则自决 + `ask: {timeout: 30}` 兜底 |
 | 工人回收 | `herdr pane close` + agent/pane `not_found` 双验证 |
 | 监督循环 | state.json + Herdr agent 状态 |
-| 状态文件 | `write .mana/<run-id>/state.json` |
+| 状态文件 | 持锁 shell 内原子替换主仓 `.mana/<run-id>/state.json`，禁止直接 `write` 工具 |
 | OMP 角色 | 当前 orchestrator；不用 OMP subagent 代替 Pi worker |
 
 ## 自检

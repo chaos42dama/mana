@@ -111,6 +111,8 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 | `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；`/mana echo` 另做目标对齐自检 |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
 
+> `/mana run` 有前置：目标仓须逐项满足技能的「仓库前置条件」节（`scripts/mana-run-lock.py`、tier 守卫、`.git/info/exclude`、仓内红线定义、`tier_grants` 批准、工具链）。缺项只走 context/intake。
+
 ### 一次 run 的生命周期
 
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
@@ -198,6 +200,8 @@ Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker
 - `/mana <goal>` — **intake**: clarify goal/non-goals/acceptance/risk paths into an acceptable Issue with suggested `tier_grants`; nothing is dispatched.
 - `/mana how|why|teach|recall|echo <scope>` — **context**: read-only Q&A; `/mana echo` additionally restates the current task goal so drift shows up immediately.
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.
+
+`/mana run` has prerequisites: the target repo must satisfy the skill's repo-prerequisites checklist — `scripts/mana-run-lock.py`, the tier guard, `.git/info/exclude`, in-repo red-line definitions, an approved `tier_grants`, and the toolchain. Missing any of them means context/intake only.
 
 Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow, never omit the worker `--model` (routes are pinned explicitly to the default read at run start, never inherited from the pane).
 
