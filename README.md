@@ -108,7 +108,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 | 入口 | 用途 |
 |---|---|
 | `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发 |
-| `/mana how/why/teach/recall <范围>` | **context**：只读上下文问答，不写代码 |
+| `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；`/mana echo` 另做目标对齐自检 |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
 
 ### 一次 run 的生命周期
@@ -196,7 +196,7 @@ Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker
 ## Usage
 
 - `/mana <goal>` — **intake**: clarify goal/non-goals/acceptance/risk paths into an acceptable Issue with suggested `tier_grants`; nothing is dispatched.
-- `/mana how|why|teach|recall <scope>` — **context**: read-only Q&A.
+- `/mana how|why|teach|recall|echo <scope>` — **context**: read-only Q&A; `/mana echo` additionally restates the current task goal so drift shows up immediately.
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.
 
 Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow, never omit the worker `--model` (routes are pinned explicitly to the default read at run start, never inherited from the pane).
