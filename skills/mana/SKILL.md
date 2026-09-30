@@ -56,7 +56,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 全局技能 ≠ 全局可 run。每个仓库独立满足以下前置，缺项只走 context/intake：
 
-1. `scripts/mana-run-lock.py`：run 单 owner 持锁入口（含 `test_mana_run_lock.py`；本仓库未自带，需自备）。
+1. `scripts/mana-run-lock.py`：run 单 owner 持锁入口（含 `test_mana_run_lock.py`；发布树自带，`cp` 到目标仓 `scripts/` 即装）。
 2. `scripts/check-mana-grant-scope.py`：tier 守卫（本仓库自带，`--self-test` 先跑通）。
 3. `.git/info/exclude` 含 `.mana/`；`.gitignore` 未跟踪 run 产物。
 4. 该仓 AGENTS.md 明确：受保护分支、只读上游区、`tier_grants` 红线的仓内定义。
