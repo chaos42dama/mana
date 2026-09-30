@@ -25,6 +25,7 @@ extensions/pi/safe-guard.ts   # Pi 扩展：MANA_WORKER=1 下危险命令只告�
 extensions/pi/precommit-review.ts  # Pi 扩展：MANA_WORKER=1 下关闭 pre-commit 审查门
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
 scripts/check-mana-grant-scope.py  # tier 授权守卫：路径 glob + toml 键前缀判定（--self-test 自带）
+scripts/mana-run-lock.py           # run 单 owner 协作锁入口（flock + exec；7 组测试见 test_mana_run_lock.py）
 ```
 
 ## 要求
@@ -76,6 +77,10 @@ cp mana/scripts/check-mana-grant-scope.py scripts/
 cp mana/scripts/mana-run-lock.py scripts/
 python3 scripts/check-mana-grant-scope.py --self-test
 # ✓ self-test ok
+
+# run 锁自检（可选）
+python3 scripts/test_mana_run_lock.py
+# Ran 7 tests ... OK
 ```
 
 ### 4. 安装工人侧（Pi）扩展
@@ -183,6 +188,7 @@ mkdir -p scripts
 cp mana/scripts/check-mana-grant-scope.py scripts/
 cp mana/scripts/mana-run-lock.py scripts/
 python3 scripts/check-mana-grant-scope.py --self-test
+python3 scripts/test_mana_run_lock.py   # optional: 7 lock tests
 
 # 4. Worker-side (Pi) extensions
 mkdir -p ~/.pi/agent/extensions
