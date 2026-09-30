@@ -5,7 +5,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 # /mana — OMP 自主编排
 
-`/mana` 有三个互斥入口：**context** 只读重建上下文；**intake** 把模糊目标收敛为可验收的 Issue；**run** 只在负责人（下称 CTO）对该 Issue 明确授权后，由当前 OMP session 作为 orchestrator，调度 Herdr 专属 pane 内的 **Pi** 工人完成 dispatch → supervise → verify → land → reclaim。
+`/mana` 有四个互斥入口：**context** 只读重建上下文；**intake** 把模糊目标收敛为可验收的 Issue；**run** 只在负责人（下称 CTO）对该 Issue 明确授权后，由当前 OMP session 作为 orchestrator，调度 Herdr 专属 pane 内的 **Pi** 工人完成 dispatch → supervise → verify → land → reclaim；**resume <run-id>** 先只读对账、再按「run 单 owner 执行入口」接管锁恢复既有 run 的监督，不重新 intake 或启动新 run。
 
 > 本技能假定运行环境为 **OMP（oh-my-pi）+ Pi 编码 agent + herdr**，不兼容其它 agent 宿主。
 
@@ -110,6 +110,19 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 4. 预检 `HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出**最后配置成的默认线路与模型**写入 `state.worker_model`：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（当前 `omniroute/omni6gpt`；缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。
 5. 若新增 lane、扩大文件/路径边界或改变 acceptance，回 intake 更新 Issue 后重新获得一次 CTO 授权；不偷渡范围。
 
+### resume（崩溃/重启恢复）
+
+`/mana resume <run-id>` 是第四个互斥入口：对账阶段只读恢复既有 run 的监督上下文；它不替代 intake 或 run。对账完成后，新会话按「run 单 owner 执行入口」的既有接管流程，在原 owner 已停止且锁已释放时取锁并重读 state，成为新的 run owner；随后在持锁 shell 内按 run 流程执行必要 mutation、重派和后续监督。
+
+1. 重读 `<repo>/.mana/<run-id>/state.json` 和对应 Issue 全文及已有评论。找不到 state 时只报告缺失，不猜测、不重建。
+2. 逐 lane 对账：运行 `herdr agent get <name>` / `herdr pane get <pane-id>` 检查存活情况，并在登记的 worktree 中运行 `git -C <worktree> rev-parse HEAD`，与 state 中记录的分支和 SHA 对照；记录最后证据。
+3. `verified|reclaimed|landed` lane 不重做；仍存活的 lane 重新挂回监督。对已死亡 lane，新 run owner 在持锁 shell 内记录合成 postmortem（lane、失败模式、最后证据）到 `decision_log`，再按原 brief 重派；同一 lane 的重派计入 §2 的最多 2 轮上限。
+4. 新 run owner 按 state 继续监督、验收并报告完整终态，不把存活/完成状态建立在会话记忆或推测上。
+
+Issue #8 验收原文：
+
+> 在 run 中途 kill 编排者后执行 /mana resume <run-id>：不重复派发已完成的 lane，死掉的 lane 被重派，最终报告完整。
+
 ## §2 dispatch
 
 先读默认配置，再把读到的值追加进 `--model`：
@@ -138,6 +151,7 @@ WORKER_MODEL=$(jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settin
 ## §3 监督循环
 
 每轮 sweep：
+
 1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`。
 2. `DONE` 是 claim：orchestrator 重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败则以 `herdr agent prompt` 打回修复，同一 lane 最多 2 轮，超限置 `blocked`。
 3. 工人报 `BLOCKED:` → 按 §2 的 needs_input 规则自决并重投（≤2 轮）。若出现确认 UI（配置漂移）按 §0.7 查因裁决；仍不能自动放行的操作写入 state 的 `blocker` 并上报。
@@ -159,7 +173,7 @@ WORKER_MODEL=$(jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settin
 ## OMP 内置能力对照（不重造）
 
 | mana 需求 | 采用能力 |
-|---|---|
+| --- | --- |
 | 目标续航 | OMP goal runtime（可用时）+ state.json 监督循环 |
 | Pi lane dispatch | `herdr worktree create` + `herdr agent start --kind pi` |
 | 工人线路与模型 | `--model <provider>/<id>` 显式钉定 + `state.worker_model`（run 启动时读 `~/.pi/agent/settings.json` 当前默认） |
