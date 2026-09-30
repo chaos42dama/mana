@@ -68,11 +68,12 @@ bun mana/checks/safe-guard.check.mjs
 # ✓ safe-guard 自主模式校验通过（5 组断言）
 ```
 
-### 3. 安装 tier 守卫到目标仓
+### 3. 安装 tier 守卫与 run 锁到目标仓
 
 ```bash
 mkdir -p scripts
 cp mana/scripts/check-mana-grant-scope.py scripts/
+cp mana/scripts/mana-run-lock.py scripts/
 python3 scripts/check-mana-grant-scope.py --self-test
 # ✓ self-test ok
 ```
@@ -177,9 +178,10 @@ mkdir -p ~/.omp/agent/extensions
 cp mana/extensions/safe-guard.ts ~/.omp/agent/extensions/safe-guard.ts
 bun mana/checks/safe-guard.check.mjs
 
-# 3. Tier guard into your repo
+# 3. Tier guard + run lock into your repo
 mkdir -p scripts
 cp mana/scripts/check-mana-grant-scope.py scripts/
+cp mana/scripts/mana-run-lock.py scripts/
 python3 scripts/check-mana-grant-scope.py --self-test
 
 # 4. Worker-side (Pi) extensions
