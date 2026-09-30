@@ -20,7 +20,9 @@ Mana 是一个 OMP（oh-my-pi）技能：把一个 OMP session 变成 **orchestr
 ```
 skills/mana/SKILL.md          # 技能本体：§0 不变量 + intake/context/run/dispatch/监督/landing/报告
 extensions/safe-guard.ts      # OMP 扩展：危险命令确认 + MANA_AUTONOMOUS 自主开关 + 受保护路径
+extensions/mana-compact.ts    # OMP 扩展：session.compacting 注入 §0 不变量 + run 快照（内联自检）
 extensions/pi/mana-worker.ts  # Pi 扩展：MANA_WORKER=1 下封禁交互式提问（内联自检）
+extensions/pi/mana-worker-compact.ts  # Pi 扩展：MANA_WORKER=1 下接管 session_before_compact 保真 brief（内联自检）
 extensions/pi/safe-guard.ts   # Pi 扩展：MANA_WORKER=1 下危险命令只告警、受保护路径硬阻断
 extensions/pi/precommit-review.ts  # Pi 扩展：MANA_WORKER=1 下关闭 pre-commit 审查门
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
@@ -60,6 +62,7 @@ cp -r mana/skills/mana ~/.omp/agent/skills/mana
 ```bash
 mkdir -p ~/.omp/agent/extensions
 cp mana/extensions/safe-guard.ts ~/.omp/agent/extensions/safe-guard.ts
+cp mana/extensions/mana-compact.ts ~/.omp/agent/extensions/mana-compact.ts
 ```
 
 自检（需要 Bun）：

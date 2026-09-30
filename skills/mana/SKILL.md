@@ -29,6 +29,8 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - `mana-worker.ts`：交互式提问类工具（`ask_question`/`question`/`ask`…）在 `tool_call` 阶段直接 block，并把「按 `recommended`/(Recommended) 项自决、把结论写进交付『决策』段」的指令回灌给模型；会话启动 notify 一次，orchestrator 可由 pane 输出确认 env 已生效。自检 `PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts`。
    - `safe-guard.ts`：危险 bash 只 `notify` 告警，不弹确认；受保护路径硬 `block`；`.pi/` 命中但落在工作区内（worktree 里的仓库文件，如 `.pi/skills/**`）不算受保护路径，只有工作区外的用户级 `~/.pi/**` 才拦。自检 `PI_SAFE_GUARD_SELFTEST=1 bun extensions/pi/safe-guard.ts`。
    - `precommit-review.ts`：整门关闭，不武装、不拦截、不排队 `/review`。原因：pi-review 的 `/review` 在非空会话里 `ctx.ui.select("Start review in:", ["Empty branch","Current session"])`，收尾还要人工 `/end-review`，工人 pane 没有人类 → 死锁；历史 run 里多个 lane 曾各自临场改用 `PI_SKIP_REVIEW=1` 绕过。审查职责改由 orchestrator 复验与 PR 评审承担。自检 `PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts`。
+   - `mana-worker-compact.ts`（工人侧 compaction 接管）：`MANA_WORKER=1` 下接管 `session_before_compact`，把工人协议块 + 原始 brief + 上次摘要整段写进压缩结果，压缩后工人不丢交付契约。自检 `PI_MANA_WORKER_COMPACT_SELFTEST=1 bun extensions/pi/mana-worker-compact.ts`；**run 预检必须一并跑**。
+   - `mana-compact.ts`（编排者侧 compaction 注入，OMP `extensions/`）：`session.compacting` 时把 §0 不变量 + 当前 run 的 lane 快照 + 下一步注入压缩摘要，压缩后 orchestrator 不丢 state 对账能力；无 `.mana/` 时不干预。自检 `MANA_COMPACT_SELFTEST=1 bun extensions/mana-compact.ts`；**run 预检必须一并跑**。
    - 因此 lane 内的 VCS 变更、提交和本地 branch 清理应直接执行；不得把 Herdr `blocked` 当常规控制流。**run 中若仍出现确认 UI，视为配置漂移**：orchestrator 先 `get/read` 查因（首要检查 pane 内 `printenv MANA_WORKER` 是否为 `1`），记录原文并在 state 记 `blocker`；只有当屏幕命令、目标和影响完全匹配 state 中已批准 lane 的本地 worktree 操作时才 `herdr agent send-keys <name> enter`。远端删除、push/merge、共享只读资源、密钥、认证、支付、main/DBA 重写一律 `blocked`。不得盲发 `enter`；宿主强制阻止的确认不是可绕过的授权门，必须记录其原文并上报。
 8. **Pi worker 必须回收**。lane 验收后，orchestrator 关闭它创建的专属 pane：`herdr pane close <pane-id>`；随后 `herdr agent get <name>` 和 `herdr pane get <pane-id>` 必须均为 `not_found`。未回收不得报告 run 完成。
 9. **orchestrator 自身同样不得停在选择上**。自主 run 内：不调用 `ask`；需要决策时按同一条规则自决（有 `recommended` 取之，否则取自评最优首项），并把结论写进 `state.decision_log`；宿主兜底是 `~/.omp/agent/config.yml` 的 `ask: {timeout: 30}`（超时自动选中 recommended，无则首项；plan mode 下不生效）。只有 tier 判定/授权边界/§0.6 红线才上报 CTO，且一个 run 最多汇总问一次。
@@ -146,7 +148,7 @@ Issue #8 验收原文：
 
 ## §3 监督循环
 
-每轮 sweep：优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。另：
+每轮 sweep：**第一步先重读技能摘要（本文件，尤其 §0 不变量与本节）与 `.mana/<run-id>/state.json`，再处理 lane 事件**——会话记忆不可信，压缩/恢复后尤其如此。优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。另：
 
 1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`。
 2. `DONE` 是 claim：orchestrator 重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败则以 `herdr agent prompt` 打回修复，同一 lane 最多 2 轮，超限置 `blocked`。
