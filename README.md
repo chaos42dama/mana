@@ -28,6 +28,7 @@ extensions/pi/precommit-review.ts  # Pi 扩展：MANA_WORKER=1 下关闭 pre-com
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
 scripts/check-mana-grant-scope.py  # tier 授权守卫：路径 glob + toml 键前缀判定（--self-test 自带）
 scripts/mana-run-lock.py           # run 单 owner 协作锁入口（flock + exec；7 组测试见 test_mana_run_lock.py）
+scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/线路/扩展自检/装机/配置；任一 FAIL 非 0 即停）
 ```
 
 ## 要求
@@ -41,6 +42,7 @@ scripts/mana-run-lock.py           # run 单 owner 协作锁入口（flock + exe
 | git 仓库 | 从主 checkout 运行，不要在链接 worktree 里发起 run |
 | `python3` | 守卫脚本与状态探测 |
 | forge CLI（`gh`/`fj`/`glab` 任一） | 开 Issue、建 PR、merge；未装则 PR 命令打印出来由你执行 |
+| 预检脚本 | Run 前跑 `bash scripts/mana-preflight.sh`（六门全过才派发；`MANA_PREFLIGHT_SKIP_SMOKE=1` 可跳线路冒烟） |
 
 ## 安装
 

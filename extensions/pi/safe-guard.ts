@@ -9,7 +9,7 @@
  * - `.pi/` 命中但路径落在当前工作区内（worktree 里的仓库文件，如 .pi/skills/**）不算受保护路径；
  *   只有工作区外的（用户级 ~/.pi/**）才拦
  */
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 
 export const DANGEROUS_PATTERNS = [
