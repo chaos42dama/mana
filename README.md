@@ -15,6 +15,7 @@ Mana 是一个 OMP（oh-my-pi）技能：把一个 OMP session 变成 **orchestr
 5. **工人必须回收**：验收后关闭专属 pane，agent/pane 双 `not_found` 才算完成。
 6. **两端都不停在选择上**：工人侧 `MANA_WORKER=1` 关掉 pane 内全部交互门（提问、危险命令确认、pre-commit 审查），orchestrator 侧规则自决 + `ask` 超时兜底；等待人类的 UI 在无人的 pane 里等于死锁。
 7. **验收结论绑定 commit**：每条 lane 验收时记 `head_sha` + `verdict`（`live|unit|type-only|blocked|failed`）；任何新 commit 作废旧结论，必须在新 SHA 上重跑验收。编排者自决轨迹与 `state.decision_log` 同源落 `.mana/<run-id>/decisions.tsv`（固定 6 列表头），最终报告设 `Attention` 段引出需人工注意的决策条目。
+8. **失败重试与预算成文**：每条 lane 带 `max_wall_minutes`（默认 30）、`max_rounds`（默认 2，即「同一 lane 最多 2 轮」）与 `retry_mode`（`network|context-overflow|tool-error|none`），run 级 `max_parallel_lanes`（默认 2）只计 running 的 code lane。墙钟超时先取证再裁决，不等于失败；`tool-error` 记 blocker，不自动换线。
 
 ## 仓库结构
 
@@ -131,7 +132,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
 3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测；`state.worker_model` 记一次 `jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`，仅记录不派发）→ 逐 lane `herdr worktree create`，`herdr agent start ... -- --exclude-tools ask_question` **不传 `--model`**：工人启动时按 pi 当前默认直接使用；启动后 `herdr agent get` 回读会话 jsonl 首条 `model_change`，实测 `provider/modelId` 写入 `state.lanes[].model` 取证。
-4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论）→ 回收 pane。
+4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论；重投按 `retry_mode` 分类：`network` 原样重投不计数、`context-overflow` 缩小文件边界、`tool-error` 记 blocker 不换线；超 `max_wall_minutes` 先取证再裁决，不直接判失败）→ 回收 pane。
 5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
 ### tier_grants：机器可判定的授权
@@ -179,6 +180,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 6. **Neither end stalls on a choice**: worker-side `MANA_WORKER=1` shuts every interactive gate inside the pane (questions, dangerous-command confirmation, pre-commit review), orchestrator-side self-decides by rule with an `ask` timeout fallback; a human-waiting UI in an unmanned pane is a deadlock.
 7. **Verdicts bind to commits**: each lane records `head_sha` + `verdict` (`live|unit|type-only|blocked|failed`) at acceptance time; any new commit voids old verdicts until acceptance re-runs on the new SHA. Orchestrator decisions mirror `state.decision_log` into `.mana/<run-id>/decisions.tsv` (fixed 6-column header) and surface in the report's `Attention` section.
 8. **Skill drift is checked, never silently inherited**: every sweep re-reads `skills/mana/SKILL.md` from `origin/main` and compares hashes; on mismatch it records `drift_checked_at` + `drift` in state and continues on the mainline version, listing it in the report.
+9. **Retries and budgets are codified**: each lane carries `max_wall_minutes` (default 30), `max_rounds` (default 2 — the same "at most 2 rounds per lane" rule), and `retry_mode` (`network|context-overflow|tool-error|none`); run-level `max_parallel_lanes` (default 2) counts only running code lanes. A wall-clock overrun means "collect evidence first", never an automatic failure; `tool-error` records a blocker and never switches the model route.
 
 ## Install
 
