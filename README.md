@@ -30,6 +30,7 @@ extensions/pi/precommit-review.ts  # Pi 扩展：MANA_WORKER=1 下关闭 pre-com
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
 checks/mana-verdict-ledger.check.mjs  # 验证账本契约自检：head_sha/verdict/decisions.tsv/失效规则（--self-test 跑合成 drill）
 scripts/check-mana-grant-scope.py  # tier 授权守卫：路径 glob + toml 键前缀判定（--self-test 自带）
+scripts/check-mana-issue.py        # intake Issue 骨架校验：6 段缺项即非 0，run 前自证（配套 test_check_mana_issue.py）
 scripts/mana-run-lock.py           # run 单 owner 协作锁入口（flock + exec；7 组测试见 test_mana_run_lock.py）
 scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/线路/扩展自检/装机/配置；任一 FAIL 非 0 即停）
 ```
@@ -106,6 +107,8 @@ PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
 PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
 ```
 
+pig 宿主另装 herdr 状态自报扩展：`mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/`（见 `extensions/pig/README.md`）。
+
 ### 5. 开启自主模式（一次性授权）
 
 ```bash
@@ -121,7 +124,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 | 入口 | 用途 |
 | --- | --- |
-| `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发 |
+| `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发。Issue 定稿先过 `python3 scripts/check-mana-issue.py` 骨架校验，`exit 0` 才可进 run |
 | `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；`/mana echo` 另做目标对齐自检 |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
 
@@ -208,6 +211,8 @@ cp mana/extensions/pi/*.ts ~/.pi/agent/extensions/
 PI_MANA_WORKER_SELFTEST=1 bun mana/extensions/pi/mana-worker.ts
 PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
 PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
+# pig host: pig-side herdr state extension
+mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/  # see extensions/pig/README.md
 
 # 5. Autonomous mode (one-shot authorization)
 export MANA_AUTONOMOUS=1
