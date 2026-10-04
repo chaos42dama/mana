@@ -14,6 +14,7 @@ Mana 是一个 OMP（oh-my-pi）技能：把一个 OMP session 变成 **orchestr
 4. **tier 由机器判定**：CTO 一次写入 `tier_grants`（路径 glob + 可选 toml 键前缀 + 守卫命令），守卫 `exit 0` 即自主 landing；越界则预检就停，不"跑完再问"。
 5. **工人必须回收**：验收后关闭专属 pane，agent/pane 双 `not_found` 才算完成。
 6. **两端都不停在选择上**：工人侧 `MANA_WORKER=1` 关掉 pane 内全部交互门（提问、危险命令确认、pre-commit 审查），orchestrator 侧规则自决 + `ask` 超时兜底；等待人类的 UI 在无人的 pane 里等于死锁。
+7. **验收结论绑定 commit**：每条 lane 验收时记 `head_sha` + `verdict`（`live|unit|type-only|blocked|failed`）；任何新 commit 作废旧结论，必须在新 SHA 上重跑验收。编排者自决轨迹与 `state.decision_log` 同源落 `.mana/<run-id>/decisions.tsv`（固定 6 列表头），最终报告设 `Attention` 段引出需人工注意的决策条目。
 
 ## 仓库结构
 
@@ -26,6 +27,7 @@ extensions/pi/mana-worker-compact.ts  # Pi 扩展：MANA_WORKER=1 下接管 sess
 extensions/pi/safe-guard.ts   # Pi 扩展：MANA_WORKER=1 下危险命令只告警、受保护路径硬阻断
 extensions/pi/precommit-review.ts  # Pi 扩展：MANA_WORKER=1 下关闭 pre-commit 审查门
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
+checks/mana-verdict-ledger.check.mjs  # 验证账本契约自检：head_sha/verdict/decisions.tsv/失效规则（--self-test 跑合成 drill）
 scripts/check-mana-grant-scope.py  # tier 授权守卫：路径 glob + toml 键前缀判定（--self-test 自带）
 scripts/mana-run-lock.py           # run 单 owner 协作锁入口（flock + exec；7 组测试见 test_mana_run_lock.py）
 scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/线路/扩展自检/装机/配置；任一 FAIL 非 0 即停）
@@ -34,7 +36,7 @@ scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/�
 ## 要求
 
 | 组件 | 说明 |
-|---|---|
+| --- | --- |
 | [OMP（oh-my-pi）](https://github.com/mariozechner/pi-coding-agent) | orchestrator 宿主；需启用技能与项目 `.pi` 发现 |
 | [herdr](https://herdr.dev) | 创建 worktree / workspace / pane，`herdr agent start --kind pi` |
 | Pi 编码 agent | lane 工人（`herdr agent start <name> --kind pi`） |
@@ -117,7 +119,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 ### 三个互斥入口
 
 | 入口 | 用途 |
-|---|---|
+| --- | --- |
 | `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发 |
 | `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；`/mana echo` 另做目标对齐自检 |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
@@ -129,7 +131,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
 3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测；`state.worker_model` 记一次 `jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`，仅记录不派发）→ 逐 lane `herdr worktree create`，`herdr agent start ... -- --exclude-tools ask_question` **不传 `--model`**：工人启动时按 pi 当前默认直接使用；启动后 `herdr agent get` 回读会话 jsonl 首条 `model_change`，实测 `provider/modelId` 写入 `state.lanes[].model` 取证。
-4. 监督循环：重读 state → 探测工人 → `DONE` 后重跑 acceptance → 打回或 verified → 回收 pane。
+4. 监督循环：重读 state → 探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论）→ 回收 pane。
 5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
 ### tier_grants：机器可判定的授权
@@ -175,6 +177,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 4. **Tier is machine-judged**: `tier_grants` (path globs + optional toml key prefixes + guard command); guard `exit 0` ⇒ autonomous landing, otherwise the run stops at preflight.
 5. **Workers are always reclaimed**: after acceptance, the pane is closed and agent/pane must both report `not_found`.
 6. **Neither end stalls on a choice**: worker-side `MANA_WORKER=1` shuts every interactive gate inside the pane (questions, dangerous-command confirmation, pre-commit review), orchestrator-side self-decides by rule with an `ask` timeout fallback; a human-waiting UI in an unmanned pane is a deadlock.
+7. **Verdicts bind to commits**: each lane records `head_sha` + `verdict` (`live|unit|type-only|blocked|failed`) at acceptance time; any new commit voids old verdicts until acceptance re-runs on the new SHA. Orchestrator decisions mirror `state.decision_log` into `.mana/<run-id>/decisions.tsv` (fixed 6-column header) and surface in the report's `Attention` section.
 
 ## Install
 
