@@ -10,7 +10,7 @@ Mana 是一个 OMP（oh-my-pi）技能：把一个 OMP session 变成 **orchestr
 
 1. **state 是唯一事实源**：每个 run 的全部状态在 `<repo>/.mana/<run-id>/state.json`，会话记忆不可信。
 2. **DONE 是 claim 不是 verdict**：工人报完成后，orchestrator 亲自重跑验收命令才信。
-3. **lane 永不 push/merge**：发布权只在 orchestrator，工人在隔离 worktree 里干活。
+3. **lane 永不 push/merge**：发布权只在 orchestrator，工人在隔离 worktree 里干活。orchestrator 的 push 也只针对本 run 自建分支、只追加 commit（永不 force-push）：每条 code lane 转 `verified` 后推一次 run 分支快照（供 `/mana resume` 对账），landing 时再 push；push 失败记 blocker 并在报告 Attention 段呈现，不阻断验收。
 4. **tier 由机器判定**：CTO 一次写入 `tier_grants`（路径 glob + 可选 toml 键前缀 + 守卫命令），守卫 `exit 0` 即自主 landing；越界则预检就停，不"跑完再问"。
 5. **工人必须回收**：验收后关闭专属 pane，agent/pane 双 `not_found` 才算完成。
 6. **两端都不停在选择上**：工人侧 `MANA_WORKER=1` 关掉 pane 内全部交互门（提问、危险命令确认、pre-commit 审查），orchestrator 侧规则自决 + `ask` 超时兜底；等待人类的 UI 在无人的 pane 里等于死锁。
@@ -136,7 +136,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
 3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测；`state.worker_model` 记一次 `jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`，仅记录不派发）→ 逐 lane `herdr worktree create`，`herdr agent start ... -- --exclude-tools ask_question` **不传 `--model`**：工人启动时按 pi 当前默认直接使用；启动后 `herdr agent get` 回读会话 jsonl 首条 `model_change`，实测 `provider/modelId` 写入 `state.lanes[].model` 取证。
 4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论；重投按 `retry_mode` 分类：`network` 原样重投不计数、`context-overflow` 缩小文件边界、`tool-error` 记 blocker 不换线；超 `max_wall_minutes` 先取证再裁决，不直接判失败）→ 回收 pane。打回/重派按 `attempt` 走：第 1 轮可同 pane `herdr agent prompt`；第 2 轮（唯一一次重派）必须先回收旧 pane（`close` + agent/pane 双 `not_found`）再新建 pane + 新 agent（仍不传 `--model`），且一律投「合并 brief」——原始 brief 全文 + 历次后续指令 + 旧 agent 最终状态行与 head SHA + 验收失败实际输出；lane 记 `attempt` 与 `superseded_by_agent` 可对账。
-5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
+5. landing：orchestrator push、建 PR（PR body 是固定简报模板：`## Why`/`## What changed`/`## Scope`/`## Tradeoffs`（可省）/`## Blast Radius`/`## Verification` 六段、全文 ≤约 40 行、squash commit body 即 PR body，`## Verification` 每条带验收命令 + 实际输出摘要 + 绑定 head SHA）、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
 ### tier_grants：机器可判定的授权
 
@@ -177,7 +177,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 
 1. **State is the only truth**: all run state lives in `<repo>/.mana/<run-id>/state.json`; conversation memory is never trusted. The OMP goal runtime is a convenience layer only — `state.json` plus the `scripts/mana-heartbeat.sh` heartbeat is the sole authoritative continuation; losing the goal tool never stops a run.
 2. **DONE is a claim, not a verdict**: the orchestrator re-runs acceptance criteria itself before believing a worker.
-3. **Lanes never push or merge**: publishing stays with the orchestrator; workers are isolated in worktrees.
+3. **Lanes never push or merge**: publishing stays with the orchestrator; workers are isolated in worktrees. Orchestrator pushes only this run's own branches, append-only (never force-push): one run-branch snapshot push after each code lane turns `verified` (for `/mana resume` audit), plus the landing push; a failed push is recorded as a blocker in the report's Attention section and never blocks acceptance.
 4. **Tier is machine-judged**: `tier_grants` (path globs + optional toml key prefixes + guard command); guard `exit 0` ⇒ autonomous landing, otherwise the run stops at preflight.
 5. **Workers are always reclaimed**: after acceptance, the pane is closed and agent/pane must both report `not_found`.
 6. **Neither end stalls on a choice**: worker-side `MANA_WORKER=1` shuts every interactive gate inside the pane (questions, dangerous-command confirmation, pre-commit review), orchestrator-side self-decides by rule with an `ask` timeout fallback; a human-waiting UI in an unmanned pane is a deadlock.
@@ -228,7 +228,7 @@ Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker
 
 `/mana run` has prerequisites: the target repo must satisfy the skill's repo-prerequisites checklist — `scripts/mana-run-lock.py`, the tier guard, `.git/info/exclude`, in-repo red-line definitions, an approved `tier_grants`, and the toolchain. Missing any of them means context/intake only.
 
-Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow, never pin a model in worker args: workers start on pi's current default route; the orchestrator reads the session's first `model_change` into state as evidence and reports any mid-run switch.
+Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow, never pin a model in worker args: workers start on pi's current default route; the orchestrator reads the session's first `model_change` into state as evidence and reports any mid-run switch. Orchestrator pushes are limited to this run's own branches (verified-lane snapshots + landing push, append-only); PR bodies are fixed briefs — `## Why` / `## What changed` / `## Scope` / `## Tradeoffs` (omittable) / `## Blast Radius` / `## Verification`, at most ~40 lines, squash commit body = PR body, and every Verification item carries an acceptance command, actual output summary, and bound head SHA.
 
 ## License
 
