@@ -267,6 +267,17 @@ Issue #8 验收原文：
 
 最终报告另设 `Attention` 段：从 `.mana/<run-id>/decisions.tsv` 引出需要人工注意的决策条目（如触碰授权边界、被否决的方案、留有疑义的自决）；无条目时写「无」。
 
+### run 后复盘（mistake class 强制化）
+
+run 终态（全部 lane `landed|blocked|failed`）后做一次复盘，四个动作按序执行：
+
+1. **挖类目**：读本 run 的 `state.decision_log`、`blockers`、`decisions.tsv` 与 Issue 评论；同一失误出现**两次及以上**（跨 run 或同 run）才算一个 mistake class（失误类目），只出现一次不算——避免把偶发当规则。可用 `bash scripts/mana-postmortem.sh <run-dir>` 从 state.json 抽 blockers/decision_log 逐条摘要、按 phase 计数并标出疑似重复关键词辅助判类，判定仍以人工为准。
+2. **选层级**：每个 mistake class 按**最高可行**层级强制：`1 架构消除 → 2 类型/lint/CI → 3 测试行为 → 4 文档/agent 规则（最后）`；选中哪层就写明为什么更高一层不成立（无权限、属跨 run 基础设施等）。
+3. **取证**：任何新增的强制手段（脚本/检查/测试）必须先在**一条真实历史错误**上失败一次，留下失败输出作为证据，本地与 CI 用同一命令；仅有文档改动视为不满足本条，必须标注「待有下一次真实错误时验证」。
+4. **红线只上报**：复盘不得在本 run 内顺手改 `tier_grants`、`scripts/mana-run-lock.py`、`scripts/check-mana-grant-scope.py` 或其他 run 基础设施；触及这些一律写进 §5 `Attention` 上报 CTO。
+
+复盘产出的新规则与强制手段回填 `AGENTS.md` 的「规则 ↔ 强制手段 ↔ 首次发现 run」对照表；规则已存在但无强制手段 = 重复发生，同一变更补齐强制手段或删规则。
+
 ## OMP 内置能力对照（不重造）
 
 | mana 需求 | 采用能力 |
