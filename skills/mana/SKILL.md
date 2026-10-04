@@ -95,6 +95,20 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    Issue 定稿后、进入 run 之前，先跑骨架校验：`python3 scripts/check-mana-issue.py --body <file>`（或 `--number <N>` 经 forge CLI 取正文）——`exit 0` 才可授权；非 0 则回 intake 补齐缺项，不得带着缺项进 run。
 3. CTO 确认 Issue 和启动口令后，才进入 run。OMP goal runtime 只是便利层（暴露 goal tool 时才 arm），**不是权威续航，也不取代 intake 的需求澄清**：intake 阶段不得把 goal runtime 当作需求澄清或续航的依赖——`state.json` + `scripts/mana-heartbeat.sh` 心跳才是唯一权威续航（与 §1 run 第 2 步同口径）。
 
+#### 设计审查四红旗（intake 阶段筛设计）
+
+筛选视角：**假定下一个贡献者是 agent**——它只看得见自己打开的文件、照抄最近的例子、走能编译的最短路径。所以一个改动若只从单个文件看是对的、对全仓却不对，就是设计缺陷。在 intake 阶段挡掉这种缺陷，比在 review 阶段靠人逐个发现便宜。
+
+| 红旗 | 定义 | 何时用 |
+| --- | --- | --- |
+| **split ownership** | 一份状态有两个写者（同一份文件/表/配置被两处代码各自修改） | 两个模块都要写同一份数据时：先定单一写者，另一处只读或走接口；定不下来就拆状态，别共享 |
+| **two ways to do one task** | 同一件事有两条路（两个函数/脚本/命令做同一件事） | 发现第二份实现或第二套用法时：删旧留新或合并成一个；加路径前先问「旧的能不能改」 |
+| **importable internals** | 内部实现可被外部 import/引用（没有 seam 的模块，内部符号暴露成公共入口） | 新模块被边界外 import，或内部函数被当公共 API 用时：收窄导出面，只留一个入口 |
+| **hand-synced list** | 手工同步的清单（同一份内容多处各维护一份，靠人记得同步） | 看到「复制到另一处」「两处要保持一致」「记得同步」时：改成单一事实源 + 脚本/生成器同步，别靠人记 |
+
+本仓只提供**视角**，不在这里实现自动化的多线路设计审查：`/mana architect`（多线路 sketch + 交叉评审）由 **Issue #13** 承接，本文件不承诺未实现的能力。
+本仓已有该视角的实证：装机同步曾是典型 hand-synced list（`~/.omp/agent/skills/mana/SKILL.md` 曾落后正本 165 行）——`scripts/mana-install.sh` 即消除它、把用户级目录变成仓库正本安装产物的手段；`scripts/mana-preflight.sh` 装机门同样用 `cmp -s` 对正本而不是再维护一份文件清单。
+
 ### context（不启动 lane、不写业务代码）
 
 `/mana how <范围>`、`/mana why <范围>`、`/mana teach <范围>`、`/mana recall <主题>`、`/mana echo <关键问题 或 #N>` 是高频上下文问答的最小等价入口，不另造多套项目技能。
