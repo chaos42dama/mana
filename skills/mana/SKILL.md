@@ -93,7 +93,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 1. `/mana <目标>` 先像 `ask` 一样追问**目标、非目标、验收、风险路径、需决策项**；不派发、不写业务代码。
 2. 把结论写成/更新 Issue（forge CLI：`gh`/`fj`/`glab` 任一，本文以 `gh` 示例）：每个 lane 有目标、文件边界、可执行 acceptance、tier、合并后清理；并**给出建议的 `tier_grants` 块**（pattern 列表 + `--allow-key` + guard 命令），供 CTO 一次批准。列出唯一启动口令：`/mana run #<issue>`（默认即自主 landing；仅当要保留人工 merge 门才加 `--manual-landing`）。
    Issue 定稿后、进入 run 之前，先跑骨架校验：`python3 scripts/check-mana-issue.py --body <file>`（或 `--number <N>` 经 forge CLI 取正文）——`exit 0` 才可授权；非 0 则回 intake 补齐缺项，不得带着缺项进 run。
-3. CTO 确认 Issue 和启动口令后，才进入 run。OMP 已启用 goal runtime；它用于维持已批准 run 的终态，不取代 intake 的需求澄清。
+3. CTO 确认 Issue 和启动口令后，才进入 run。OMP goal runtime 只是便利层（暴露 goal tool 时才 arm），**不是权威续航，也不取代 intake 的需求澄清**：intake 阶段不得把 goal runtime 当作需求澄清或续航的依赖——`state.json` + `scripts/mana-heartbeat.sh` 心跳才是唯一权威续航（与 §1 run 第 2 步同口径）。
 
 ### context（不启动 lane、不写业务代码）
 
@@ -150,8 +150,8 @@ Issue #8 验收原文：
 - 每条需持续会话的 lane：先从当前 orchestrator pane 用 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 创建**下方横切**的本 run 专属 pane（`--env` 落在 pane 的 shell 上，pi 继承；不得用 `--direction right`）。读取返回的 `workspace_id`、`pane_id` 后直接启动：`herdr agent start <agent-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（`--` 之后是 pi 原生参数；**不带 `--model`**——线路由 pi 启动时按配置默认顺势使用）。`<agent-name>` 和 branch 必须唯一，写入 state。
 - **实际线路靠回读取证，不靠锁**：每条 lane 启动后 `herdr agent get <agent-name>` 取 `agent_session` 指向的会话 jsonl，读其**首条** `type == "model_change"` 记录的 `provider`/`modelId` 写入 `state.lanes[].model`（`pi --list-models` 非交互模式不可用，勿用），以事实值为准：与 `state.worker_model` 不一致时在 state 记一行原因（run 期间 pi 默认可能已被切换），不因此停 lane。运行中 jsonl **新增** `model_change` 属中途换线：记 `blocker` 与原文上报，不自行换回。
 - 工人侧三处扩展（§0.7）由 `MANA_WORKER=1` 自动接管，brief **不再需要**逐条交代 `PI_SKIP_REVIEW=1` 之类的绕过技巧；brief 只写业务边界。
-- Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。
-- 工人交付：完成所有工作后只输出一个机器可解析的最终状态行，且**首字符必须为** `DONE:` 或 `BLOCKED:`；随后可列证据（命令输出/路径/diff 摘要）。未出现该前缀的自然语言“完成”不是终态，orchestrator 必须 `read` 后追问，不得回收。
+- Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付洁净契约（`DONE:` 前工作区必须洁净，见下条）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。
+- 工人交付：完成所有工作后只输出一个机器可解析的最终状态行，且**首字符必须为** `DONE:` 或 `BLOCKED:`；随后可列证据（命令输出/路径/diff 摘要）。未出现该前缀的自然语言“完成”不是终态，orchestrator 必须 `read` 后追问，不得回收。**交付洁净契约**：输出 `DONE:` 前该 lane worktree 的工作区必须洁净——`git status --short` 输出为空；若存在纯格式化或工具自动改写（如 pi-lens deferred format 留下的改动），必须与成果一并 commit，不得静默丢弃；不得以「保持工作区干净」为名丢弃任何语义改动。
 - 工人 `BLOCKED:` 后必须紧跟两行：`QUESTION:` 与 `RECOMMENDED:`（工人自评的建议项）。这是 needs_input 而不是失败：orchestrator 先在授权范围内按 `RECOMMENDED` 自决，写入 `state.decision_log`，再按 attempt 规则重投——`attempt=1` 可 `herdr agent prompt` 复用同 pane 投递自决结论；`attempt=2` 必须换 fresh agent（按 §3 第 2 条顺序：回收旧 pane → 双 `not_found` → 新 pane + 新 agent，仍不传 `--model`），并把自决结论写进合并 brief（见下）的「历次后续指令」与「已作出的自决结论」字段。重投最多 2 轮——即该 lane 的 `max_rounds` 字段（默认 2，见 §1 run 第 3 步），与 `attempt ≤ 2` 是同一上限的两个视角；超限置 `blocked`；只有决策触及 tier 判定/授权边界/§0.6 红线才上报 CTO。**不要在 run 中途把工人的问题原样转给 CTO**。
 - `agent_prompt_stalled` 或 wait timeout 不代表未投递或失败；先 `herdr agent get/read`，不得重复 prompt。实际确认 UI 按 §0.7 裁决。
 
@@ -224,7 +224,7 @@ Issue #8 验收原文：
 **drift 记账**：每轮 sweep 完成后把 `drift_checked_at`（UTC ISO，如 `2026-01-01T00:00:00Z`）与是否命中漂移写回 state（`drift: true|false`）。`used_hash != main_hash` 即**技能漂移**：state 记 `drift: true` 并写明两版 hash（`drift_versions: {used, main}`），**按主干版继续执行**（以其 §0/§3 语义为准），**不得静默沿用旧版**；两 hash 一致则记 `drift: false`（no_drift）。漂移命中后的后续动作只有一条：**按主干版继续，并在 §5 报告里列出**。随后按序执行：
 
 1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`；运行时长已超过其 `max_wall_minutes` 的 lane 按 §1 run 第 3 步「墙钟超时不等于失败」先取证再裁决，不直接置失败。
-2. `DONE` 是 claim：orchestrator 重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败打回按 `attempt` 走（打回最多 2 轮——其 `max_rounds` 字段，默认 2，超限置 `blocked`）：
+2. `DONE` 是 claim，且绑 SHA 前先查工作树：orchestrator 先在该 lane worktree 跑 `git status --short`——非空则**不绑 `head_sha`、不判 `verified`**，先按 §1 run 第 3 步失效规则处置：同一 attempt 内让工人把未提交改动 commit 掉（纯格式化/工具自动改写必须与成果一并 commit），或由编排者明确丢弃并把 `git status --short` 原文与理由记进 `decision_log`；处置完再重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败打回按 `attempt` 走（打回最多 2 轮——其 `max_rounds` 字段，默认 2，超限置 `blocked`）：
    - **`attempt=1`（首轮打回）**：`herdr agent prompt <agent> <打回指令> --wait --timeout <MS>` 复用同 pane。
    - **`attempt=2`（唯一一次重派）**：换 fresh worker，顺序固定——① `herdr pane close <旧 pane-id>`；② `herdr agent get <旧 agent-name>` 与 `herdr pane get <旧 pane-id>` 双 `not_found` 验证；③ 新建 pane，必须带 `--env MANA_WORKER=1`（同 §2 dispatch）；④ `herdr agent start <新 agent 名> --kind pi --pane <新 pane-id> -- --exclude-tools ask_question`（**仍不得传 `--model`**）；⑤ 用合并 brief（§2 模板）投递。state 同步：`superseded_by_agent` 记旧 agent 名（旧名保留可对账），`agent_name`/`pane_id` 更新为新值，`attempt` 置 `2`。
    打回修复等产生新 commit 的动作触发 §1 run 第 3 步失效规则：旧 `head_sha` 上的结论作废，重验必须在新 `head_sha` 上重跑 acceptance，并更新 `head_sha`/`verdict`。
