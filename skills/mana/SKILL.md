@@ -128,7 +128,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - **验证账本**：`head_sha` 记验收通过当时该 lane worktree 的 `git rev-parse HEAD`；`verdict` ∈ {`live`, `unit`, `type-only`, `blocked`, `failed`}，每个值由哪类 acceptance 支撑：`live`＝真实服务/端到端断言实跑通过，`unit`＝单元或静态断言实跑通过，`type-only`＝只做了类型检查或文本断言（未实跑业务路径），`blocked`＝lane 被 blocker 挡住未完成验收，`failed`＝acceptance 实跑失败。结论只在其 `head_sha` 上有效。
    - **失效规则**：任何产生新 commit 的动作（重派、打回修复、改代码后重验）之后，旧 `head_sha` 上的 `verified`/`landed` 结论一律作废，必须在新 `head_sha` 上重跑 acceptance 才可恢复；恢复时以新 `head_sha` + 新 `verdict` 覆盖账本。
    - **重派账目**：`attempt` 从 1 起，`1`＝首轮，`2`＝唯一一次重派（§3 第 2 条）；第 2 轮生效时旧 agent 名移入 `superseded_by_agent`，`agent_name`/`pane_id` 更新为新值——旧 agent 名由此保留，可与 pane/agent 回收 `not_found` 证据、合并 brief、`decisions.tsv` 三处互证对账。
-   - **决策轨迹落盘**：编排者把 `state.decision_log` 的每条决策在持锁 shell 内同步写到 `.mana/<run-id>/decisions.tsv`（同源同内容；`.mana/` 不进版本库，工人不写它）。表头固定 6 列：`time<TAB>phase<TAB>decision<TAB>reason<TAB>evidence<TAB>result`（`<TAB>` 为制表符，每行恰好 6 列）。
+   - **决策轨迹落盘**：编排者把 `state.decision_log` 的每条决策在持锁 shell 内同步写到 `.mana/<run-id>/decisions.tsv`（同源同内容；`.mana/` 不进版本库，工人不写它）。表头固定 6 列：`time<TAB>phase<TAB>decision<TAB>reason<TAB>evidence<TAB>result`（`<TAB>` 为制表符，每行恰好 6 列）。留档口径：`evidence` 可截断到判定所需的最小片段，但脏树处置（§3 第 2 步 ① 取证）的 `evidence` 必须含 `git diff --stat` 汇总行与至少一处代表性 hunk（`git diff` 原文），截断须注明范围（如「…中间省略 N 行…」），不得以截断掩盖语义改动。
    - **重试与预算字段**：`max_wall_minutes`（默认 30，lane 首次 dispatch 时写入）＝该 lane 的墙钟预算；`max_rounds`（默认 2）＝§2/§3「同一 lane 最多 2 轮」的那个数——两处只是同一字段的两个视角，不是两个数；`retry_mode` ∈ {`network`,`context-overflow`,`tool-error`,`none`}＝该 lane 当前失败的归类，每次重投前更新。
    - **重试分类表**（每次重投前先归类，动作落 `decision_log`/`decisions.tsv`）：
 
@@ -141,7 +141,8 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
    - **墙钟超时不等于失败**：超过 `max_wall_minutes` 时不得直接判 `blocked`/`failed`，必须先 `herdr agent get`/`read` 取证，再按 §0.7 裁决（prompt 未投递 / 配置漂移 / 真 `BLOCKED:`）；裁决结果写 `decision_log`，取证仍无定论才置 `blocked`。
    - **并发上限**：state 顶层 `max_parallel_lanes`（默认 2）只约束**同时处于 `running` 的 code lane 数**，readonly lane 不计入；达到上限时新 lane 保持 `planned`，直到有 code lane 离开 `running` 再派发。
-   4. 预检（已脚本化为 `scripts/mana-preflight.sh`，任一项失败非 0 即停，run 启动先跑它；下述清单即脚本覆盖的语义）：`HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出 pi 当前的默认线路写入 `state.worker_model`（**仅记录与对照，不改写、不传派发参数**）：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。pig 为可选工人线路：预检 f 段（pig 门）仅在 pig 二进制在位时校验 pig 侧 herdr 状态扩展（`~/.pig/agent/extensions/herdr-agent-state.ts`）的装机与 `reportArgs` 自检，未装 pig 则 SKIP 不拦。
+
+4. 预检（已脚本化为 `scripts/mana-preflight.sh`，任一项失败非 0 即停，run 启动先跑它；下述清单即脚本覆盖的语义）：`HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出 pi 当前的默认线路写入 `state.worker_model`（**仅记录与对照，不改写、不传派发参数**）：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。pig 为可选工人线路：预检 f 段（pig 门）仅在 pig 二进制在位时校验 pig 侧 herdr 状态扩展（`~/.pig/agent/extensions/herdr-agent-state.ts`）的装机与 `reportArgs` 自检，未装 pig 则 SKIP 不拦。
 5. 若新增 lane、扩大文件/路径边界或改变 acceptance，回 intake 更新 Issue 后重新获得一次 CTO 授权；不偷渡范围。
 
 ### resume（崩溃/重启恢复）
@@ -238,7 +239,11 @@ Issue #8 验收原文：
 **drift 记账**：每轮 sweep 完成后把 `drift_checked_at`（UTC ISO，如 `2026-01-01T00:00:00Z`）与是否命中漂移写回 state（`drift: true|false`）。`used_hash != main_hash` 即**技能漂移**：state 记 `drift: true` 并写明两版 hash（`drift_versions: {used, main}`），**按主干版继续执行**（以其 §0/§3 语义为准），**不得静默沿用旧版**；两 hash 一致则记 `drift: false`（no_drift）。漂移命中后的后续动作只有一条：**按主干版继续，并在 §5 报告里列出**。随后按序执行：
 
 1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`；运行时长已超过其 `max_wall_minutes` 的 lane 按 §1 run 第 3 步「墙钟超时不等于失败」先取证再裁决，不直接置失败。
-2. `DONE` 是 claim，且绑 SHA 前先查工作树：orchestrator 先在该 lane worktree 跑 `git status --short`——非空则**不绑 `head_sha`、不判 `verified`**，先按 §1 run 第 3 步失效规则处置：同一 attempt 内让工人把未提交改动 commit 掉（纯格式化/工具自动改写必须与成果一并 commit），或由编排者明确丢弃并把 `git status --short` 原文与理由记进 `decision_log`；处置完再重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败打回按 `attempt` 走（打回最多 2 轮——其 `max_rounds` 字段，默认 2，超限置 `blocked`）：
+2. `DONE` 是 claim，且绑 SHA 前先查工作树：orchestrator 先在该 lane worktree 跑 `git status --short`——非空则**不绑 `head_sha`、不判 `verified`**，也不得先处置，必须按下面的可审计三步走（先取证再归类后处置；**取证缺失 ⇒ 不得处置**：不得 commit、不得 discard、不得绑 SHA）；处置完再重跑 acceptance 命令。
+   - **① 取证**：在决定 commit 或 discard 之前，把 `git status --short` 与 `git diff`（含 `git diff --stat` 汇总行）的**原文**逐字写入 `decision_log.evidence`（同步 `decisions.tsv`）；留档口径（可截断到判定所需最小片段，但必含 `--stat` 汇总行 + 至少一处代表性 hunk，截断须注明范围）见 §1 run 第 3 步「决策轨迹落盘」。
+   - **② 归类**：按 diff 原文判定 (a) 纯格式化/工具自动改写（仅空白、换行、引号、缩进、行宽重排，无语义变化）还是 (b) 含语义改动（增删改断言、逻辑、契约文本）；归类依据（支持结论的 diff 片段）一并写进 `decision_log`。
+   - **③ 处置**：(a) 默认与成果一并 commit——优先同一 attempt 内让工人自己 commit；工人已收尾/不可用时编排者可代为 commit，须在 `decision_log` 标注「编排者代 commit」。(b) **禁止静默丢弃**：必须打回让工人 commit 或明确说明；该打回是洁净门整改、不是 §2 重试，`attempt` 不推进、`max_rounds` 不消耗；若最终决定丢弃，同样不消耗轮次，但 §5 报告 `Attention` 段必须列出被丢弃的语义改动摘要。
+   处置完重跑 acceptance 命令：通过后把实际输出写入 state，状态更新为 `verified`；失败打回按 `attempt` 走（打回最多 2 轮——其 `max_rounds` 字段，默认 2，超限置 `blocked`）：
    - **`attempt=1`（首轮打回）**：`herdr agent prompt <agent> <打回指令> --wait --timeout <MS>` 复用同 pane。
    - **`attempt=2`（唯一一次重派）**：换 fresh worker，顺序固定——① `herdr pane close <旧 pane-id>`；② `herdr agent get <旧 agent-name>` 与 `herdr pane get <旧 pane-id>` 双 `not_found` 验证；③ 新建 pane，必须带 `--env MANA_WORKER=1`（同 §2 dispatch）；④ `herdr agent start <新 agent 名> --kind pi --pane <新 pane-id> -- --exclude-tools ask_question`（**仍不得传 `--model`**）；⑤ 用合并 brief（§2 模板）投递。state 同步：`superseded_by_agent` 记旧 agent 名（旧名保留可对账），`agent_name`/`pane_id` 更新为新值，`attempt` 置 `2`。
    打回修复等产生新 commit 的动作触发 §1 run 第 3 步失效规则：旧 `head_sha` 上的结论作废，重验必须在新 `head_sha` 上重跑 acceptance，并更新 `head_sha`/`verdict`。
@@ -271,6 +276,7 @@ Issue #8 验收原文：
    ## Verification
    <1–3 条；每条三件套：验收命令 + 实际输出摘要 + 绑定的 head SHA；没有实际输出的条目不许写>
    ```
+
 3. 等 CI（如 GitHub Actions：`gh run list` / `gh run watch <run-id>`）与项目验收命令；失败则修复、重验，不能因“已授权”跳过。
 4. merge 前对 PR 的真实 diff 复跑授权守卫，把命令与输出写进 state：`authorization.autonomous_landing=true` 且守卫 `exit 0` → 执行 squash merge（`gh pr merge --squash --delete-branch` / `fj pr merge -M squash -d`）；守卫非 0（越出 `tier_grants`）→ 不合并，按 §0.6 上报 CTO。`--manual-landing`（`autonomous_landing=false`）时，PR/CI 后上报 CTO。
 5. PR merge 确认后，orchestrator 移除本 run worktree，删除本地/远端 feature branch，`git fetch --prune` 验证无残留；最后评论并关闭 Issue。
@@ -279,7 +285,7 @@ Issue #8 验收原文：
 
 全程证据与结论优先评论到对应 Issue（forge CLI）；最终报告含：授权范围、lane 表终态、每条验收实际输出、Pi pane 回收双 `not_found`、PR 号、CI、merge、worktree/branch 清理与后续建议。
 
-最终报告另设 `Attention` 段：从 `.mana/<run-id>/decisions.tsv` 引出需要人工注意的决策条目（如触碰授权边界、被否决的方案、留有疑义的自决）；无条目时写「无」。
+最终报告另设 `Attention` 段：从 `.mana/<run-id>/decisions.tsv` 引出需要人工注意的决策条目（如触碰授权边界、被否决的方案、留有疑义的自决）；无条目时写「无」。固定要求：本 run 内凡发生「编排者代 commit」（§3 第 2 步三步处置 (a)、工人已收尾）或「丢弃含语义改动的 diff」（(b) 仍要丢弃），各列一条，可从 `decisions.tsv` 的 `evidence` 列引用。
 
 ### run 后复盘（mistake class 强制化）
 

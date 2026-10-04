@@ -17,6 +17,7 @@ Mana 是一个 OMP（oh-my-pi）技能：把一个 OMP session 变成 **orchestr
 7. **验收结论绑定 commit**：每条 lane 验收时记 `head_sha` + `verdict`（`live|unit|type-only|blocked|failed`）；任何新 commit 作废旧结论，必须在新 SHA 上重跑验收。编排者自决轨迹与 `state.decision_log` 同源落 `.mana/<run-id>/decisions.tsv`（固定 6 列表头），最终报告设 `Attention` 段引出需人工注意的决策条目。
 8. **失败重试与预算成文**：每条 lane 带 `max_wall_minutes`（默认 30）、`max_rounds`（默认 2，即「同一 lane 最多 2 轮」）与 `retry_mode`（`network|context-overflow|tool-error|none`），run 级 `max_parallel_lanes`（默认 2）只计 running 的 code lane。墙钟超时先取证再裁决，不等于失败；`tool-error` 记 blocker，不自动换线。
 9. **交付洁净契约**：工人输出 `DONE:` 前其 worktree 必须洁净（`git status --short` 为空）；纯格式化/工具自动改写必须与成果一并 commit，不得静默丢弃。编排者绑 `head_sha` 前先查工作树，脏则不判 `verified`，处置（让工人 commit，或明确丢弃并记 `decision_log`）后重验。
+10. **脏树处置可审计**：脏树按三步处置，取证缺失不得处置——① 取证：`git status --short` + `git diff` 原文（含 `git diff --stat` 汇总行）逐字进 `decision_log.evidence`；② 归类：(a) 纯格式化 / (b) 含语义改动，附依据 hunk；③ 处置：(a) commit（工人已收尾时编排者可代 commit 并标注）；(b) 禁止静默丢弃，打回不推进 `attempt`、不消耗 `max_rounds`，仍丢弃则列 `Attention`。
 
 ## 仓库结构
 
@@ -177,6 +178,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 9. **Redispatch always carries a merged brief**: round 1 may re-prompt the same pane; round 2 (the only redispatch) must retire the old pane (`close` + double `not_found`), start a fresh agent, and deliver a merged brief — original brief in full, every follow-up instruction, the old agent's final status line and head SHA, and the actual failing acceptance output. Lanes record `attempt` and `superseded_by_agent` for audit.
 10. **Retries and budgets are codified**: each lane carries `max_wall_minutes` (default 30), `max_rounds` (default 2 — the same "at most 2 rounds per lane" rule that `attempt` also caps), and `retry_mode` (`network|context-overflow|tool-error|none`); run-level `max_parallel_lanes` (default 2) counts only running code lanes. A wall-clock overrun means "collect evidence first", never an automatic failure; `tool-error` records a blocker and never switches the model route.
 11. **Delivery hygiene is contractual**: a worker's worktree must be clean (`git status --short` empty) before it may print `DONE:`; pure formatting or tool auto-edits must be committed together with the deliverable, never silently dropped. Before binding `head_sha` the orchestrator checks the worktree — a dirty tree means no `verified` until the worker commits or the orchestrator discards explicitly and logs it in `decision_log`.
+12. **Dirty-tree handling is auditable**: three ordered steps, no evidence no disposition — ① evidence: `git status --short` + `git diff` verbatim (including the `git diff --stat` summary) into `decision_log.evidence`; ② classify: (a) formatting-only vs (b) semantic, with the supporting hunks; ③ dispose: (a) commit (the orchestrator may commit on the worker's behalf and must say so); (b) never silently dropped — sending it back consumes no `attempt`/`max_rounds`, and an actual discard must be listed in the report's `Attention` section.
 
 ## Install
 
