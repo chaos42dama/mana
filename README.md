@@ -51,35 +51,40 @@ scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/�
 
 ## 安装
 
-### 1. 安装技能（项目级或全局）
+**仓库正本 = 唯一事实源；用户级目录（`~/.omp/agent/skills`、`~/.omp/agent/extensions`、`~/.pi/agent/extensions`、`~/.agents/skills`）是安装产物**，由脚本覆盖，不要手改。
 
 ```bash
-# 项目级（推荐：随仓库共享给团队）
-git clone https://github.com/chaos42dama/mana.git
-mkdir -p .pi/skills
-cp -r mana/skills/mana .pi/skills/mana
-
-# 全局
-mkdir -p ~/.omp/agent/skills
-cp -r mana/skills/mana ~/.omp/agent/skills/mana
+# 安装/修复（幂等：内容相同不写，不动 mtime）
+bash scripts/mana-install.sh
+# 只比对不写；任一目标漂移则 exit 1
+bash scripts/mana-install.sh --check
+# 看将做什么，不写
+bash scripts/mana-install.sh --dry-run
 ```
 
-### 2. 安装 safe-guard 扩展
+脚本只复制下表列出的文件（`cmp -s` 判定，与 `scripts/mana-preflight.sh` 装机门同口径），绝不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
 
-```bash
-mkdir -p ~/.omp/agent/extensions
-cp mana/extensions/safe-guard.ts ~/.omp/agent/extensions/safe-guard.ts
-cp mana/extensions/mana-compact.ts ~/.omp/agent/extensions/mana-compact.ts
-```
+| 仓库正本 | 目标 |
+| --- | --- |
+| `skills/mana/SKILL.md` | `~/.omp/agent/skills/mana/SKILL.md` |
+| `skills/mana/SKILL.md` | `~/.agents/skills/mana/SKILL.md`（父目录存在时） |
+| `extensions/pi/*.ts` | `~/.pi/agent/extensions/` |
+| `extensions/safe-guard.ts`、`extensions/mana-compact.ts` | `~/.omp/agent/extensions/` |
 
 自检（需要 Bun）：
 
 ```bash
-bun mana/checks/safe-guard.check.mjs
+node checks/mana-install.check.mjs --self-test
+node checks/safe-guard.check.mjs
 # ✓ safe-guard 自主模式校验通过（5 组断言）
+PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts
+PI_SAFE_GUARD_SELFTEST=1 bun extensions/pi/safe-guard.ts
+PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts
+PI_MANA_WORKER_COMPACT_SELFTEST=1 bun extensions/pi/mana-worker-compact.ts
+MANA_COMPACT_SELFTEST=1 bun extensions/mana-compact.ts
 ```
 
-### 3. 安装 tier 守卫与 run 锁到目标仓
+### 安装 tier 守卫与 run 锁到目标仓
 
 ```bash
 mkdir -p scripts
@@ -93,24 +98,9 @@ python3 scripts/test_mana_run_lock.py
 # Ran 7 tests ... OK
 ```
 
-### 4. 安装工人侧（Pi）扩展
-
-```bash
-mkdir -p ~/.pi/agent/extensions
-cp mana/extensions/pi/*.ts ~/.pi/agent/extensions/
-```
-
-自检（需要 Bun）：
-
-```bash
-PI_MANA_WORKER_SELFTEST=1 bun mana/extensions/pi/mana-worker.ts
-PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
-PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
-```
-
 pig 宿主另装 herdr 状态自报扩展：`mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/`（见 `extensions/pig/README.md`）。
 
-### 5. 开启自主模式（一次性授权）
+### 开启自主模式（一次性授权）
 
 ```bash
 export MANA_AUTONOMOUS=1      # 建议写进 ~/.bashrc
@@ -190,33 +180,25 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 
 ## Install
 
+**The repo checkout is the single source of truth; the user-level dirs (`~/.omp/agent/skills`, `~/.omp/agent/extensions`, `~/.pi/agent/extensions`, `~/.agents/skills`) are install artifacts** — always installed by the script, never hand-edited.
+
 ```bash
-# 1. Skill (per-project, or into ~/.omp/agent/skills for global)
-git clone https://github.com/chaos42dama/mana.git
-mkdir -p .pi/skills && cp -r mana/skills/mana .pi/skills/mana
+# Install / repair (idempotent: identical content is not rewritten)
+bash scripts/mana-install.sh
+# Compare only; any drift exits 1
+bash scripts/mana-install.sh --check
+# Preview actions without writing
+bash scripts/mana-install.sh --dry-run
 
-# 2. safe-guard extension
-mkdir -p ~/.omp/agent/extensions
-cp mana/extensions/safe-guard.ts ~/.omp/agent/extensions/safe-guard.ts
-bun mana/checks/safe-guard.check.mjs
-
-# 3. Tier guard + run lock into your repo
+# Tier guard + run lock into your repo
 mkdir -p scripts
 cp mana/scripts/check-mana-grant-scope.py scripts/
 cp mana/scripts/mana-run-lock.py scripts/
 python3 scripts/check-mana-grant-scope.py --self-test
 python3 scripts/test_mana_run_lock.py   # optional: 7 lock tests
-
-# 4. Worker-side (Pi) extensions
-mkdir -p ~/.pi/agent/extensions
-cp mana/extensions/pi/*.ts ~/.pi/agent/extensions/
-PI_MANA_WORKER_SELFTEST=1 bun mana/extensions/pi/mana-worker.ts
-PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
-PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
 # pig host: pig-side herdr state extension
 mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/  # see extensions/pig/README.md
-
-# 5. Autonomous mode (one-shot authorization)
+# Autonomous mode (one-shot authorization)
 export MANA_AUTONOMOUS=1
 ```
 
