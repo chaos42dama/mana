@@ -131,7 +131,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
 3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测；`state.worker_model` 记一次 `jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`，仅记录不派发）→ 逐 lane `herdr worktree create`，`herdr agent start ... -- --exclude-tools ask_question` **不传 `--model`**：工人启动时按 pi 当前默认直接使用；启动后 `herdr agent get` 回读会话 jsonl 首条 `model_change`，实测 `provider/modelId` 写入 `state.lanes[].model` 取证。
-4. 监督循环：重读 state → 探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论）→ 回收 pane。
+4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论）→ 回收 pane。
 5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
 ### tier_grants：机器可判定的授权
@@ -171,13 +171,14 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 
 ## Why it survives unattended runs
 
-1. **State is the only truth**: all run state lives in `<repo>/.mana/<run-id>/state.json`; conversation memory is never trusted.
+1. **State is the only truth**: all run state lives in `<repo>/.mana/<run-id>/state.json`; conversation memory is never trusted. The OMP goal runtime is a convenience layer only — `state.json` plus the `scripts/mana-heartbeat.sh` heartbeat is the sole authoritative continuation; losing the goal tool never stops a run.
 2. **DONE is a claim, not a verdict**: the orchestrator re-runs acceptance criteria itself before believing a worker.
 3. **Lanes never push or merge**: publishing stays with the orchestrator; workers are isolated in worktrees.
 4. **Tier is machine-judged**: `tier_grants` (path globs + optional toml key prefixes + guard command); guard `exit 0` ⇒ autonomous landing, otherwise the run stops at preflight.
 5. **Workers are always reclaimed**: after acceptance, the pane is closed and agent/pane must both report `not_found`.
 6. **Neither end stalls on a choice**: worker-side `MANA_WORKER=1` shuts every interactive gate inside the pane (questions, dangerous-command confirmation, pre-commit review), orchestrator-side self-decides by rule with an `ask` timeout fallback; a human-waiting UI in an unmanned pane is a deadlock.
 7. **Verdicts bind to commits**: each lane records `head_sha` + `verdict` (`live|unit|type-only|blocked|failed`) at acceptance time; any new commit voids old verdicts until acceptance re-runs on the new SHA. Orchestrator decisions mirror `state.decision_log` into `.mana/<run-id>/decisions.tsv` (fixed 6-column header) and surface in the report's `Attention` section.
+8. **Skill drift is checked, never silently inherited**: every sweep re-reads `skills/mana/SKILL.md` from `origin/main` and compares hashes; on mismatch it records `drift_checked_at` + `drift` in state and continues on the mainline version, listing it in the report.
 
 ## Install
 
