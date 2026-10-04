@@ -27,9 +27,11 @@
 | lane 出现确认 UI / `MANA_WORKER` 未生效 | `PI_*_SELFTEST` + `scripts/mana-preflight.sh`（`precommit-review` 整门关闭） | #11 |
 | 工人 brief 漏写禁令导致打回 | §2 合并 brief 模板（全文逐字一次投齐，禁止「同前」） | #28 |
 | 守卫未实跑就 merge | §4.4 merge 前对真实 diff 复跑 `scripts/check-mana-grant-scope.py` | 首发（run 号不可考） |
-| 工人线路被 `--model` 锁死回流 | §2「不带 `--model`」禁令 + dispatch 文本断言；尚无常驻检查，待补 | #20 |
+| 工人线路被 `--model` 锁死回流 | §2「不带 `--model`」禁令 + dispatch 文本断言；`checks/mana-orchestrator-contract.check.mjs`（断言所有 `agent start` 命令模板不含 `--model` + §5 自检断言句在位） | #20 |
 | verdict 绑定 `head_sha`，新 commit 作废旧结论 | `checks/mana-verdict-ledger.check.mjs`（结论 + head 绑定断言） | #24（复发 #29） |
-| 工人交付后工作树残留格式化脏改动（pi-lens deferred format） | 编排者 verified 前断言 `git status --short` 为空；尚无常驻检查，待补 | #24（复发 #27/#29，一类三次） |
-| 契约无常驻 drill，drill 随 run 结束失传 | 待补（grant 不含 `checks/`，需 CTO 授权常驻位置） | #28（复发 #29） |
-| herdr/gh CLI 参数形态误用 | §2 参数形态说明（位置参数在前、`--timeout` 须配 `--wait`）；尚无常驻检查，待补 | #27 |
-| `--wait` 超时被误当未投递 | §2「先 `agent get/read` 取证，不得重复 prompt」；尚无常驻检查，待补 | #24（复发 #27/#28/#29） |
+| 工人交付后工作树残留格式化脏改动（pi-lens deferred format） | `checks/mana-worker-hygiene.check.mjs`（§2 洁净契约 + §3 脏树不绑 `head_sha` 不判 `verified`） | #24（复发 #27/#29，一类三次） |
+| 契约无常驻 drill，drill 随 run 结束失传 | drill 常驻在 `checks/*.check.mjs --self-test`（#31 起） | #28（复发 #29） |
+| herdr/gh CLI 参数形态误用 | §2 参数形态说明 + `checks/mana-orchestrator-contract.check.mjs`（CLI 形态断言：agent prompt/agent wait/pane split/agent start） | #27 |
+| `--wait` 超时被误当未投递 | §2「先 `agent get/read` 取证，不得重复 prompt」+ `checks/mana-orchestrator-contract.check.mjs`（超时 ≠ 未投递断言） | #24（复发 #27/#28/#29） |
+
+新增检查请登记到本表（文件名 + 断言范围），防 drill 失传。
