@@ -106,6 +106,8 @@ PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
 PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
 ```
 
+pig 宿主另装 herdr 状态自报扩展：`mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/`（见 `extensions/pig/README.md`）。
+
 ### 5. 开启自主模式（一次性授权）
 
 ```bash
@@ -208,6 +210,8 @@ cp mana/extensions/pi/*.ts ~/.pi/agent/extensions/
 PI_MANA_WORKER_SELFTEST=1 bun mana/extensions/pi/mana-worker.ts
 PI_SAFE_GUARD_SELFTEST=1 bun mana/extensions/pi/safe-guard.ts
 PI_PRECOMMIT_SELFTEST=1 bun mana/extensions/pi/precommit-review.ts
+# pig host: pig-side herdr state extension
+mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/  # see extensions/pig/README.md
 
 # 5. Autonomous mode (one-shot authorization)
 export MANA_AUTONOMOUS=1
