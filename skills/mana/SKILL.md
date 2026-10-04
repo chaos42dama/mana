@@ -92,6 +92,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 1. `/mana <目标>` 先像 `ask` 一样追问**目标、非目标、验收、风险路径、需决策项**；不派发、不写业务代码。
 2. 把结论写成/更新 Issue（forge CLI：`gh`/`fj`/`glab` 任一，本文以 `gh` 示例）：每个 lane 有目标、文件边界、可执行 acceptance、tier、合并后清理；并**给出建议的 `tier_grants` 块**（pattern 列表 + `--allow-key` + guard 命令），供 CTO 一次批准。列出唯一启动口令：`/mana run #<issue>`（默认即自主 landing；仅当要保留人工 merge 门才加 `--manual-landing`）。
+   Issue 定稿后、进入 run 之前，先跑骨架校验：`python3 scripts/check-mana-issue.py --body <file>`（或 `--number <N>` 经 forge CLI 取正文）——`exit 0` 才可授权；非 0 则回 intake 补齐缺项，不得带着缺项进 run。
 3. CTO 确认 Issue 和启动口令后，才进入 run。OMP 已启用 goal runtime；它用于维持已批准 run 的终态，不取代 intake 的需求澄清。
 
 ### context（不启动 lane、不写业务代码）
@@ -144,7 +145,7 @@ Issue #8 验收原文：
 
 ## §2 dispatch
 
-**不传 `--model`**：工人 pi 进程启动时按 `~/.pi/agent/settings.json` 的当前默认线路直接使用；orchestrator 启动后回读实际线路写进 state 取证（见下条）。仓库与派发参数都不锁死任何模型/线路。
+**线路只有一条规则：人工预配置好的 pi 默认线路**。**不存在按 lane 指定或升级线路的口子**（含 verifier lane 在内，每次工人 pi 一律使用默认线路）；orchestrator 不传 `--model`、不改写 `state.worker_model`，只做事后回读取证：工人 pi 启动时按 `~/.pi/agent/settings.json` 的当前默认线路直接使用，orchestrator 启动后回读实际线路写进 state 取证（见下条）。
 
 - 每条需持续会话的 lane：先从当前 orchestrator pane 用 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 创建**下方横切**的本 run 专属 pane（`--env` 落在 pane 的 shell 上，pi 继承；不得用 `--direction right`）。读取返回的 `workspace_id`、`pane_id` 后直接启动：`herdr agent start <agent-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（`--` 之后是 pi 原生参数；**不带 `--model`**——线路由 pi 启动时按配置默认顺势使用）。`<agent-name>` 和 branch 必须唯一，写入 state。
 - **实际线路靠回读取证，不靠锁**：每条 lane 启动后 `herdr agent get <agent-name>` 取 `agent_session` 指向的会话 jsonl，读其**首条** `type == "model_change"` 记录的 `provider`/`modelId` 写入 `state.lanes[].model`（`pi --list-models` 非交互模式不可用，勿用），以事实值为准：与 `state.worker_model` 不一致时在 state 记一行原因（run 期间 pi 默认可能已被切换），不因此停 lane。运行中 jsonl **新增** `model_change` 属中途换线：记 `blocker` 与原文上报，不自行换回。
