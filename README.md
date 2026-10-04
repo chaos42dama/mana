@@ -131,7 +131,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
 3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测；`state.worker_model` 记一次 `jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`，仅记录不派发）→ 逐 lane `herdr worktree create`，`herdr agent start ... -- --exclude-tools ask_question` **不传 `--model`**：工人启动时按 pi 当前默认直接使用；启动后 `herdr agent get` 回读会话 jsonl 首条 `model_change`，实测 `provider/modelId` 写入 `state.lanes[].model` 取证。
-4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论）→ 回收 pane。
+4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后重跑 acceptance → 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论）→ 回收 pane。打回/重派按 `attempt` 走：第 1 轮可同 pane `herdr agent prompt`；第 2 轮（唯一一次重派）必须先回收旧 pane（`close` + agent/pane 双 `not_found`）再新建 pane + 新 agent（仍不传 `--model`），且一律投「合并 brief」——原始 brief 全文 + 历次后续指令 + 旧 agent 最终状态行与 head SHA + 验收失败实际输出；lane 记 `attempt` 与 `superseded_by_agent` 可对账。
 5. landing：orchestrator push、建 PR、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
 ### tier_grants：机器可判定的授权
@@ -179,6 +179,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 6. **Neither end stalls on a choice**: worker-side `MANA_WORKER=1` shuts every interactive gate inside the pane (questions, dangerous-command confirmation, pre-commit review), orchestrator-side self-decides by rule with an `ask` timeout fallback; a human-waiting UI in an unmanned pane is a deadlock.
 7. **Verdicts bind to commits**: each lane records `head_sha` + `verdict` (`live|unit|type-only|blocked|failed`) at acceptance time; any new commit voids old verdicts until acceptance re-runs on the new SHA. Orchestrator decisions mirror `state.decision_log` into `.mana/<run-id>/decisions.tsv` (fixed 6-column header) and surface in the report's `Attention` section.
 8. **Skill drift is checked, never silently inherited**: every sweep re-reads `skills/mana/SKILL.md` from `origin/main` and compares hashes; on mismatch it records `drift_checked_at` + `drift` in state and continues on the mainline version, listing it in the report.
+9. **Redispatch always carries a merged brief**: round 1 may re-prompt the same pane; round 2 (the only redispatch) must retire the old pane (`close` + double `not_found`), start a fresh agent, and deliver a merged brief — original brief in full, every follow-up instruction, the old agent's final status line and head SHA, and the actual failing acceptance output. Lanes record `attempt` and `superseded_by_agent` for audit.
 
 ## Install
 
