@@ -108,7 +108,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 ### run（已批准 Issue）
 
 1. 先按「run 单 owner 执行入口」启动持锁 shell，再执行以下写入与 mutation。读 Issue 全文与已有评论（forge CLI），确认已批准的子任务分解与授权范围：`autonomous_landing` 缺省为 `true`，仅 `--manual-landing` 时为 `false`，并写入 state；缺任一项 → 只回 intake，不 dispatch。
-2. 把可检查的终态写入 state 的 `goal` 字段，并在当前 OMP runtime 暴露 `/goal` 或 goal tool 时同步 arm；未暴露时 state + Herdr 监督循环仍是权威续航机制。终态未满足不得因 worker 结束而停机。
+2. 把可检查的终态写入 state 的 `goal` 字段；当前 OMP runtime 暴露 `/goal` 或 goal tool 时同步 arm。**goal runtime 只是便利层**：`state.json` + `scripts/mana-heartbeat.sh` 心跳才是唯一权威续航机制，goal runtime 丢失、被压缩失效、或当前 runtime 未暴露 goal 工具，都**不构成 run 中断**，也不得作为停止理由。终态未满足不得因 worker 结束而停机。
 3. 写 lanes 表进 state.json：`{run_id, base_ref, authorization{...,tier_grants}, goal, lanes: [{id, kind: readonly|code, target, acceptance: [命令或可观察断言], head_sha, verdict, tier, tier_grant, guard_output, branch, workspace_id, pane_id, agent_name, model: <provider>/<id>（启动后回读取证）, status: planned|running|verifying|verified|reclaimed|landed|blocked|failed}]}`。`tier_grant` 记命中的 grant 索引，`guard_output` 记守卫命令的实际输出摘要。
    - **验证账本**：`head_sha` 记验收通过当时该 lane worktree 的 `git rev-parse HEAD`；`verdict` ∈ {`live`, `unit`, `type-only`, `blocked`, `failed`}，每个值由哪类 acceptance 支撑：`live`＝真实服务/端到端断言实跑通过，`unit`＝单元或静态断言实跑通过，`type-only`＝只做了类型检查或文本断言（未实跑业务路径），`blocked`＝lane 被 blocker 挡住未完成验收，`failed`＝acceptance 实跑失败。结论只在其 `head_sha` 上有效。
    - **失效规则**：任何产生新 commit 的动作（重派、打回修复、改代码后重验）之后，旧 `head_sha` 上的 `verified`/`landed` 结论一律作废，必须在新 `head_sha` 上重跑 acceptance 才可恢复；恢复时以新 `head_sha` + 新 `verdict` 覆盖账本。
@@ -152,7 +152,20 @@ Issue #8 验收原文：
 
 ## §3 监督循环
 
-每轮 sweep：**第一步先重读技能摘要（本文件，尤其 §0 不变量与本节）与 `.mana/<run-id>/state.json`，再处理 lane 事件**——会话记忆不可信，压缩/恢复后尤其如此。优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。另：
+每轮 sweep 的**第一步是固定顺序的「三读」，三读完成前不处理 lane 事件**——会话记忆不可信，压缩/恢复后尤其如此：
+
+1. **读 state**：重读 `.mana/<run-id>/state.json`（唯一事实源）。
+2. **读技能正本并比对 hash**：从 origin/main 重读本技能文件（`skills/mana/SKILL.md`）与在用版比对（可直接复制；技能装在其它路径时替换为实际路径）：
+
+   ```sh
+   git fetch origin main
+   main_hash=$(git show origin/main:skills/mana/SKILL.md | git hash-object --stdin)  # 主干版 hash
+   used_hash=$(git hash-object skills/mana/SKILL.md)                                 # 在用版 hash
+   ```
+
+3. **读 lane 事件**：优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。
+
+**drift 记账**：每轮 sweep 完成后把 `drift_checked_at`（UTC ISO，如 `2026-01-01T00:00:00Z`）与是否命中漂移写回 state（`drift: true|false`）。`used_hash != main_hash` 即**技能漂移**：state 记 `drift: true` 并写明两版 hash（`drift_versions: {used, main}`），**按主干版继续执行**（以其 §0/§3 语义为准），**不得静默沿用旧版**；两 hash 一致则记 `drift: false`（no_drift）。漂移命中后的后续动作只有一条：**按主干版继续，并在 §5 报告里列出**。随后按序执行：
 
 1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`。
 2. `DONE` 是 claim：orchestrator 重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败则以 `herdr agent prompt` 打回修复，同一 lane 最多 2 轮，超限置 `blocked`。打回修复等产生新 commit 的动作触发 §1 run 第 3 步失效规则：旧 `head_sha` 上的结论作废，重验必须在新 `head_sha` 上重跑 acceptance，并更新 `head_sha`/`verdict`。
@@ -178,7 +191,7 @@ Issue #8 验收原文：
 
 | mana 需求 | 采用能力 |
 | --- | --- |
-| 目标续航 | OMP goal runtime（可用时）+ state.json 监督循环 |
+| 目标续航 | state.json + `mana-heartbeat.sh` 心跳为唯一权威；OMP goal runtime 仅为便利层（暴露 goal tool 时 arm） |
 | Pi lane dispatch | `herdr worktree create` + `herdr agent start --kind pi` |
 | 工人线路与模型 | 不传 `--model` 顺势吃 pi 默认；`herdr agent get` → session jsonl 首条 `model_change` 回读取证写 `state.lanes[].model` |
 | worktree 隔离 | Herdr worktree workspace / Git worktree |
