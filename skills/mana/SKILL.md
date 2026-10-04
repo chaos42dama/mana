@@ -109,11 +109,23 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 1. 先按「run 单 owner 执行入口」启动持锁 shell，再执行以下写入与 mutation。读 Issue 全文与已有评论（forge CLI），确认已批准的子任务分解与授权范围：`autonomous_landing` 缺省为 `true`，仅 `--manual-landing` 时为 `false`，并写入 state；缺任一项 → 只回 intake，不 dispatch。
 2. 把可检查的终态写入 state 的 `goal` 字段；当前 OMP runtime 暴露 `/goal` 或 goal tool 时同步 arm。**goal runtime 只是便利层**：`state.json` + `scripts/mana-heartbeat.sh` 心跳才是唯一权威续航机制，goal runtime 丢失、被压缩失效、或当前 runtime 未暴露 goal 工具，都**不构成 run 中断**，也不得作为停止理由。终态未满足不得因 worker 结束而停机。
-3. 写 lanes 表进 state.json：`{run_id, base_ref, authorization{...,tier_grants}, goal, lanes: [{id, kind: readonly|code, target, acceptance: [命令或可观察断言], head_sha, verdict, tier, tier_grant, guard_output, branch, workspace_id, pane_id, agent_name, attempt: <整数，从 1 起；1＝首轮，2＝唯一一次重派>, superseded_by_agent: <被当前 agent 取代的旧 agent 名，首轮为 null，用于重派对账>, model: <provider>/<id>（启动后回读取证）, status: planned|running|verifying|verified|reclaimed|landed|blocked|failed}]}`。`tier_grant` 记命中的 grant 索引，`guard_output` 记守卫命令的实际输出摘要。
+3. 写 lanes 表进 state.json：`{run_id, base_ref, authorization{...,tier_grants}, goal, max_parallel_lanes, lanes: [{id, kind: readonly|code, target, acceptance: [命令或可观察断言], head_sha, verdict, tier, tier_grant, guard_output, branch, workspace_id, pane_id, agent_name, attempt: <整数，从 1 起；1＝首轮，2＝唯一一次重派>, superseded_by_agent: <被当前 agent 取代的旧 agent 名，首轮为 null，用于重派对账>, model: <provider>/<id>（启动后回读取证）, max_wall_minutes, max_rounds, retry_mode, status: planned|running|verifying|verified|reclaimed|landed|blocked|failed}]}`。`tier_grant` 记命中的 grant 索引，`guard_output` 记守卫命令的实际输出摘要。
    - **验证账本**：`head_sha` 记验收通过当时该 lane worktree 的 `git rev-parse HEAD`；`verdict` ∈ {`live`, `unit`, `type-only`, `blocked`, `failed`}，每个值由哪类 acceptance 支撑：`live`＝真实服务/端到端断言实跑通过，`unit`＝单元或静态断言实跑通过，`type-only`＝只做了类型检查或文本断言（未实跑业务路径），`blocked`＝lane 被 blocker 挡住未完成验收，`failed`＝acceptance 实跑失败。结论只在其 `head_sha` 上有效。
    - **失效规则**：任何产生新 commit 的动作（重派、打回修复、改代码后重验）之后，旧 `head_sha` 上的 `verified`/`landed` 结论一律作废，必须在新 `head_sha` 上重跑 acceptance 才可恢复；恢复时以新 `head_sha` + 新 `verdict` 覆盖账本。
    - **重派账目**：`attempt` 从 1 起，`1`＝首轮，`2`＝唯一一次重派（§3 第 2 条）；第 2 轮生效时旧 agent 名移入 `superseded_by_agent`，`agent_name`/`pane_id` 更新为新值——旧 agent 名由此保留，可与 pane/agent 回收 `not_found` 证据、合并 brief、`decisions.tsv` 三处互证对账。
    - **决策轨迹落盘**：编排者把 `state.decision_log` 的每条决策在持锁 shell 内同步写到 `.mana/<run-id>/decisions.tsv`（同源同内容；`.mana/` 不进版本库，工人不写它）。表头固定 6 列：`time<TAB>phase<TAB>decision<TAB>reason<TAB>evidence<TAB>result`（`<TAB>` 为制表符，每行恰好 6 列）。
+   - **重试与预算字段**：`max_wall_minutes`（默认 30，lane 首次 dispatch 时写入）＝该 lane 的墙钟预算；`max_rounds`（默认 2）＝§2/§3「同一 lane 最多 2 轮」的那个数——两处只是同一字段的两个视角，不是两个数；`retry_mode` ∈ {`network`,`context-overflow`,`tool-error`,`none`}＝该 lane 当前失败的归类，每次重投前更新。
+   - **重试分类表**（每次重投前先归类，动作落 `decision_log`/`decisions.tsv`）：
+
+     | `retry_mode` | 识别信号 | 动作 | 消耗 `max_rounds` | 消耗墙钟 | 记什么 |
+     | --- | --- | --- | --- | --- | --- |
+     | `network` | 传输/超时类瞬时错误（prompt 未投递、连接中断） | 原样重投同一 lane 同一 brief | 否 | 是 | `decision_log` 一行 |
+     | `context-overflow` | 上下文溢出 / compact 丢失协议 | 先按 §0.7 跑 compaction 扩展自检取证，再缩小文件边界后重投 | 是 | 是 | `decision_log`（含取证与新边界） |
+     | `tool-error` | 工具/宿主侧确定性错误 | 记 `state.blocker` + 原文；**不自动换线**（CTO 决策：工人只用 pi 默认线路，编排者仅按 §2 回读取证），也不自行换 brief 反复试 | 否 | 否（记账后即上报） | `state.blocker` + `decision_log` |
+     | `none` | 无可重试的失败 / 不许重试 | 不重试，直接置终态 `blocked`/`failed` | — | — | 终态 + `decision_log` |
+
+   - **墙钟超时不等于失败**：超过 `max_wall_minutes` 时不得直接判 `blocked`/`failed`，必须先 `herdr agent get`/`read` 取证，再按 §0.7 裁决（prompt 未投递 / 配置漂移 / 真 `BLOCKED:`）；裁决结果写 `decision_log`，取证仍无定论才置 `blocked`。
+   - **并发上限**：state 顶层 `max_parallel_lanes`（默认 2）只约束**同时处于 `running` 的 code lane 数**，readonly lane 不计入；达到上限时新 lane 保持 `planned`，直到有 code lane 离开 `running` 再派发。
 4. 预检（已脚本化为 `scripts/mana-preflight.sh`，任一项失败非 0 即停，run 启动先跑它；下述清单即脚本覆盖的语义）：`HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出 pi 当前的默认线路写入 `state.worker_model`（**仅记录与对照，不改写、不传派发参数**）：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。
 5. 若新增 lane、扩大文件/路径边界或改变 acceptance，回 intake 更新 Issue 后重新获得一次 CTO 授权；不偷渡范围。
 
@@ -123,7 +135,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 1. 重读 `<repo>/.mana/<run-id>/state.json` 和对应 Issue 全文及已有评论。找不到 state 时只报告缺失，不猜测、不重建。
 2. 逐 lane 对账：运行 `herdr agent get <name>` / `herdr pane get <pane-id>` 检查存活情况，并在登记的 worktree 中运行 `git -C <worktree> rev-parse HEAD`，与 state 中记录的分支和 SHA 对照；记录最后证据。
-3. `verified|reclaimed|landed` lane 不重做；仍存活的 lane 重新挂回监督。对已死亡 lane，新 run owner 在持锁 shell 内记录合成 postmortem（lane、失败模式、最后证据）到 `decision_log`，再按合并 brief（§2 模板）重派：拼 brief 前必须先读旧 agent 的最终状态行原文（`DONE:`/`BLOCKED:` 逐字）与该 lane worktree 的 head SHA（`git rev-parse HEAD`；未提交则逐字附 `git status --short` 原文），连同原始 brief 全文与全部后续指令一次投齐；同一 lane 的重派仍计入 attempt ≤ 2 上限，第 2 轮按 §3 第 2 条顺序换 fresh agent。
+3. `verified|reclaimed|landed` lane 不重做；仍存活的 lane 重新挂回监督。对已死亡 lane，新 run owner 在持锁 shell 内记录合成 postmortem（lane、失败模式、最后证据）到 `decision_log`，再按合并 brief（§2 模板）重派：拼 brief 前必须先读旧 agent 的最终状态行原文（`DONE:`/`BLOCKED:` 逐字）与该 lane worktree 的 head SHA（`git rev-parse HEAD`；未提交则逐字附 `git status --short` 原文），连同原始 brief 全文与全部后续指令一次投齐；同一 lane 的重派计入其 `max_rounds` 上限（默认 2，见 §1 run 第 3 步），并按 `attempt` 语义推进——第 2 轮按 §3 第 2 条顺序换 fresh agent。
 4. 新 run owner 按 state 继续监督、验收并报告完整终态，不把存活/完成状态建立在会话记忆或推测上。
 
 Issue #8 验收原文：
@@ -139,7 +151,7 @@ Issue #8 验收原文：
 - 工人侧三处扩展（§0.7）由 `MANA_WORKER=1` 自动接管，brief **不再需要**逐条交代 `PI_SKIP_REVIEW=1` 之类的绕过技巧；brief 只写业务边界。
 - Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。
 - 工人交付：完成所有工作后只输出一个机器可解析的最终状态行，且**首字符必须为** `DONE:` 或 `BLOCKED:`；随后可列证据（命令输出/路径/diff 摘要）。未出现该前缀的自然语言“完成”不是终态，orchestrator 必须 `read` 后追问，不得回收。
-- 工人 `BLOCKED:` 后必须紧跟两行：`QUESTION:` 与 `RECOMMENDED:`（工人自评的建议项）。这是 needs_input 而不是失败：orchestrator 先在授权范围内按 `RECOMMENDED` 自决，写入 `state.decision_log`，再按 attempt 规则重投——`attempt=1` 可 `herdr agent prompt` 复用同 pane 投递自决结论；`attempt=2` 必须换 fresh agent（按 §3 第 2 条顺序：回收旧 pane → 双 `not_found` → 新 pane + 新 agent，仍不传 `--model`），并把自决结论写进合并 brief（见下）的「历次后续指令」与「已作出的自决结论」字段。同一 lane 最多 2 轮（attempt ≤ 2），超限置 `blocked`；只有决策触及 tier 判定/授权边界/§0.6 红线才上报 CTO。**不要在 run 中途把工人的问题原样转给 CTO**。
+- 工人 `BLOCKED:` 后必须紧跟两行：`QUESTION:` 与 `RECOMMENDED:`（工人自评的建议项）。这是 needs_input 而不是失败：orchestrator 先在授权范围内按 `RECOMMENDED` 自决，写入 `state.decision_log`，再按 attempt 规则重投——`attempt=1` 可 `herdr agent prompt` 复用同 pane 投递自决结论；`attempt=2` 必须换 fresh agent（按 §3 第 2 条顺序：回收旧 pane → 双 `not_found` → 新 pane + 新 agent，仍不传 `--model`），并把自决结论写进合并 brief（见下）的「历次后续指令」与「已作出的自决结论」字段。重投最多 2 轮——即该 lane 的 `max_rounds` 字段（默认 2，见 §1 run 第 3 步），与 `attempt ≤ 2` 是同一上限的两个视角；超限置 `blocked`；只有决策触及 tier 判定/授权边界/§0.6 红线才上报 CTO。**不要在 run 中途把工人的问题原样转给 CTO**。
 - `agent_prompt_stalled` 或 wait timeout 不代表未投递或失败；先 `herdr agent get/read`，不得重复 prompt。实际确认 UI 按 §0.7 裁决。
 
 ### 合并 brief 模板
@@ -210,12 +222,12 @@ Issue #8 验收原文：
 
 **drift 记账**：每轮 sweep 完成后把 `drift_checked_at`（UTC ISO，如 `2026-01-01T00:00:00Z`）与是否命中漂移写回 state（`drift: true|false`）。`used_hash != main_hash` 即**技能漂移**：state 记 `drift: true` 并写明两版 hash（`drift_versions: {used, main}`），**按主干版继续执行**（以其 §0/§3 语义为准），**不得静默沿用旧版**；两 hash 一致则记 `drift: false`（no_drift）。漂移命中后的后续动作只有一条：**按主干版继续，并在 §5 报告里列出**。随后按序执行：
 
-1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`。
-2. `DONE` 是 claim：orchestrator 重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败打回按 attempt 走（同一 lane 最多 2 轮，超限置 `blocked`）：
+1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`；运行时长已超过其 `max_wall_minutes` 的 lane 按 §1 run 第 3 步「墙钟超时不等于失败」先取证再裁决，不直接置失败。
+2. `DONE` 是 claim：orchestrator 重跑 acceptance 命令。通过后把实际输出写入 state，状态更新为 `verified`；失败打回按 `attempt` 走（打回最多 2 轮——其 `max_rounds` 字段，默认 2，超限置 `blocked`）：
    - **`attempt=1`（首轮打回）**：`herdr agent prompt <agent> <打回指令> --wait --timeout <MS>` 复用同 pane。
    - **`attempt=2`（唯一一次重派）**：换 fresh worker，顺序固定——① `herdr pane close <旧 pane-id>`；② `herdr agent get <旧 agent-name>` 与 `herdr pane get <旧 pane-id>` 双 `not_found` 验证；③ 新建 pane，必须带 `--env MANA_WORKER=1`（同 §2 dispatch）；④ `herdr agent start <新 agent 名> --kind pi --pane <新 pane-id> -- --exclude-tools ask_question`（**仍不得传 `--model`**）；⑤ 用合并 brief（§2 模板）投递。state 同步：`superseded_by_agent` 记旧 agent 名（旧名保留可对账），`agent_name`/`pane_id` 更新为新值，`attempt` 置 `2`。
    打回修复等产生新 commit 的动作触发 §1 run 第 3 步失效规则：旧 `head_sha` 上的结论作废，重验必须在新 `head_sha` 上重跑 acceptance，并更新 `head_sha`/`verdict`。
-3. 工人报 `BLOCKED:` → 按 §2 的 needs_input 规则自决并重投（≤2 轮；attempt 语义与第 2 条一致：第 1 轮可同 pane，第 2 轮必须 fresh agent + 合并 brief）。若出现确认 UI（配置漂移）按 §0.7 查因裁决；仍不能自动放行的操作写入 state 的 `blocker` 并上报。
+3. 工人报 `BLOCKED:` → 按 §2 的 needs_input 规则自决并重投（≤ 该 lane 的 `max_rounds`；attempt 语义与第 2 条一致：第 1 轮可同 pane，第 2 轮必须 fresh agent + 合并 brief）。若出现确认 UI（配置漂移）按 §0.7 查因裁决；仍不能自动放行的操作写入 state 的 `blocker` 并上报。
 4. `verified` lane 立即 `herdr pane close <pane-id>`，再以 `agent get`、`pane get` 双 `not_found` 验证，状态置 `reclaimed`。不得关闭非本 run 创建的 pane。
 5. 所有 lane 都为 `reclaimed|blocked|failed` 才进入 landing；不得因关闭 worker 而遗失 state 或验收证据。
 
