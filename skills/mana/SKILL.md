@@ -141,7 +141,8 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
    - **墙钟超时不等于失败**：超过 `max_wall_minutes` 时不得直接判 `blocked`/`failed`，必须先 `herdr agent get`/`read` 取证，再按 §0.7 裁决（prompt 未投递 / 配置漂移 / 真 `BLOCKED:`）；裁决结果写 `decision_log`，取证仍无定论才置 `blocked`。
    - **并发上限**：state 顶层 `max_parallel_lanes`（默认 2）只约束**同时处于 `running` 的 code lane 数**，readonly lane 不计入；达到上限时新 lane 保持 `planned`，直到有 code lane 离开 `running` 再派发。
-   4. 预检（已脚本化为 `scripts/mana-preflight.sh`，任一项失败非 0 即停，run 启动先跑它；下述清单即脚本覆盖的语义）：`HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出 pi 当前的默认线路写入 `state.worker_model`（**仅记录与对照，不改写、不传派发参数**）：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。pig 为可选工人线路：预检 f 段（pig 门）仅在 pig 二进制在位时校验 pig 侧 herdr 状态扩展（`~/.pig/agent/extensions/herdr-agent-state.ts`）的装机与 `reportArgs` 自检，未装 pig 则 SKIP 不拦。
+
+4. 预检（已脚本化为 `scripts/mana-preflight.sh`，任一项失败非 0 即停，run 启动先跑它；下述清单即脚本覆盖的语义）：`HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出 pi 当前的默认线路写入 `state.worker_model`（**仅记录与对照，不改写、不传派发参数**）：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。pig 为可选工人线路：预检 f 段（pig 门）仅在 pig 二进制在位时校验 pig 侧 herdr 状态扩展（`~/.pig/agent/extensions/herdr-agent-state.ts`）的装机与 `reportArgs` 自检，未装 pig 则 SKIP 不拦。
 5. 若新增 lane、扩大文件/路径边界或改变 acceptance，回 intake 更新 Issue 后重新获得一次 CTO 授权；不偷渡范围。
 
 ### resume（崩溃/重启恢复）
@@ -275,6 +276,7 @@ Issue #8 验收原文：
    ## Verification
    <1–3 条；每条三件套：验收命令 + 实际输出摘要 + 绑定的 head SHA；没有实际输出的条目不许写>
    ```
+
 3. 等 CI（如 GitHub Actions：`gh run list` / `gh run watch <run-id>`）与项目验收命令；失败则修复、重验，不能因“已授权”跳过。
 4. merge 前对 PR 的真实 diff 复跑授权守卫，把命令与输出写进 state：`authorization.autonomous_landing=true` 且守卫 `exit 0` → 执行 squash merge（`gh pr merge --squash --delete-branch` / `fj pr merge -M squash -d`）；守卫非 0（越出 `tier_grants`）→ 不合并，按 §0.6 上报 CTO。`--manual-landing`（`autonomous_landing=false`）时，PR/CI 后上报 CTO。
 5. PR merge 确认后，orchestrator 移除本 run worktree，删除本地/远端 feature branch，`git fetch --prune` 验证无残留；最后评论并关闭 Issue。
