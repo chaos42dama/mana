@@ -13,7 +13,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 1. **state 是唯一事实源**。状态存 `<repo>/.mana/<run-id>/state.json`（`.git/info/exclude` 排除 `.mana/`）。每次监督 sweep 先重读，再原子重写。会话记忆不可信。
 2. **DONE 是 claim 不是 verdict**。工人报完成后，orchestrator 必须亲自重跑该 lane 的验收命令，通过才信。
-3. **代码 lane 必须 worktree 隔离并由 Pi 执行**。用 `herdr worktree create` 创建本 run 工作区，在其专属 pane 执行 `herdr agent start <name> --kind pi`；不得用 OMP `task`/`workpool` 充当代码工人。只读 lane 同样优先 Pi pane；只有一次性无会话调查才可用 OMP `scout`。
+3. **代码 lane 必须 worktree 隔离并由 Pi 执行**。用 `herdr worktree create` 创建本 run 工作区，在其专属 pane 执行 `herdr agent start <name> --kind pi`（pi 线路专用；pig 为可选工人线路，启动见 §2 pig 分支）；不得用 OMP `task`/`workpool` 充当代码工人。只读 lane 同样优先 Pi pane；只有一次性无会话调查才可用 OMP `scout`。
 4. **lane 永不 push/merge**。发布权只在 orchestrator，工人永不 push/merge。orchestrator 对远端的 push 仅限两类，且都只针对本 run 创建的分支：§4.1 的 verified 快照推送（每条 code lane 转 `verified` 后推一次 run 分支快照）与 landing push——两类都只追加新 commit，**禁止 force-push**，禁止推 main 或非本 run 的分支。
 5. **永不 force-push、永不碰非本 run 创建的分支/worktree/会话**。
 6. **一次授权覆盖已批准的 run，tier 由机器判定**（前置：当前仓库已满足「仓库前置条件」节，否则只走 context/intake）。state 写入 `authorization: {issue, approved_at, scope, autonomous_landing: true|false, tier_grants: [{patterns: [路径 glob], max_tier, guard, approved_at}]}`。
@@ -162,8 +162,9 @@ Issue #8 验收原文：
 
 **线路只有一条规则：人工预配置好的 pi 默认线路**。**不存在按 lane 指定或升级线路的口子**（含 verifier lane 在内，每次工人 pi 一律使用默认线路）；orchestrator 不传 `--model`、不改写 `state.worker_model`，只做事后回读取证：工人 pi 启动时按 `~/.pi/agent/settings.json` 的当前默认线路直接使用，orchestrator 启动后回读实际线路写进 state 取证（见下条）。
 
-- 每条需持续会话的 lane：先从当前 orchestrator pane 用 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 创建**下方横切**的本 run 专属 pane（`--env` 落在 pane 的 shell 上，pi 继承；不得用 `--direction right`）。读取返回的 `workspace_id`、`pane_id` 后直接启动：`herdr agent start <agent-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（`--` 之后是 pi 原生参数；**不带 `--model`**——线路由 pi 启动时按配置默认顺势使用）。`<agent-name>` 和 branch 必须唯一，写入 state。
-- **实际线路靠回读取证，不靠锁**：每条 lane 启动后 `herdr agent get <agent-name>` 取 `agent_session` 指向的会话 jsonl，读其**首条** `type == "model_change"` 记录的 `provider`/`modelId` 写入 `state.lanes[].model`（`pi --list-models` 非交互模式不可用，勿用），以事实值为准：与 `state.worker_model` 不一致时在 state 记一行原因（run 期间 pi 默认可能已被切换），不因此停 lane。运行中 jsonl **新增** `model_change` 属中途换线：记 `blocker` 与原文上报，不自行换回。
+- 每条需持续会话的 lane（pi 线路；pig 分支见下条）：先从当前 orchestrator pane 用 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 创建**下方横切**的本 run 专属 pane（`--env` 落在 pane 的 shell 上，pi 继承；不得用 `--direction right`）。读取返回的 `workspace_id`、`pane_id` 后直接启动：`herdr agent start <agent-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（`--` 之后是 pi 原生参数；**不带 `--model`**——线路由 pi 启动时按配置默认顺势使用）。`<agent-name>` 和 branch 必须唯一，写入 state。
+- **pig lane 分支（可选工人线路；除本条所列差异外，其余规则与 pi 线路共用）**：herdr 不识别 pig（`--kind` 无 `pig` 取值、无屏检测），**不用 named agent API，全程走 pane API**——pane split 同上条（`--env MANA_WORKER=1` 照带），随后 `herdr pane run <pane-id> pig -a`（`-a` 跳过项目信任提示；herdr 对 pig 的状态感知靠 pig 侧自报扩展 `~/.pig/agent/extensions/herdr-agent-state.ts`，扩展从 `~/.pig/agent/extensions` 自动发现、无需 `-e`，装机由本仓 `extensions/pig/` 与 `scripts/mana-preflight.sh` f 段 pig 门保证；**不传 `--model`**，与 pi 同策略，线路靠事后回读取证）。pig lane 的 `agent_name` 记 pane id：`herdr agent get/read/wait` 均以 pane id 为 target。打回/重投不用 `herdr agent prompt`/`herdr agent send-keys`（对 pig 报 `agent_not_ready: not an active named agent`），改用 `herdr pane send-text <pane> <text>` 紧接 `herdr pane send-keys <pane> enter` 投递。
+- **实际线路靠回读取证，不靠锁（pi/pig 两条线路共用本条结论，仅取证路径分线路）**：每条 lane 启动后读会话 jsonl 的**首条** `type == "model_change"` 记录的 `provider`/`modelId` 写入 `state.lanes[].model`，以事实值为准：与 `state.worker_model` 不一致时在 state 记一行原因（run 期间 pi 默认可能已被切换），不因此停 lane。运行中 jsonl **新增** `model_change` 属中途换线：记 `blocker` 与原文上报，不自行换回。取证路径：pi 用 `herdr agent get <agent-name>` 取 `agent_session` 指向的会话 jsonl（`pi --list-models` 非交互模式不可用，勿用）；pig 的 `agent_session` 在 herdr 0.9.0 下恒为 null（即使自报扩展带了 `--agent-session-path`），改扫 `~/.pig/agent/sessions/<slug>/*.jsonl` 里**最新的那份**，同样读首条 `model_change`。
 - 工人侧三处扩展（§0.7）由 `MANA_WORKER=1` 自动接管，brief **不再需要**逐条交代 `PI_SKIP_REVIEW=1` 之类的绕过技巧；brief 只写业务边界。
 - Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付洁净契约（`DONE:` 前工作区必须洁净，见下条）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。
 - 工人交付：完成所有工作后只输出一个机器可解析的最终状态行，且**首字符必须为** `DONE:` 或 `BLOCKED:`；随后可列证据（命令输出/路径/diff 摘要）。未出现该前缀的自然语言“完成”不是终态，orchestrator 必须 `read` 后追问，不得回收。**交付洁净契约**：输出 `DONE:` 前该 lane worktree 的工作区必须洁净——`git status --short` 输出为空；若存在纯格式化或工具自动改写（如 pi-lens deferred format 留下的改动），必须与成果一并 commit，不得静默丢弃；不得以「保持工作区干净」为名丢弃任何语义改动。
@@ -236,6 +237,8 @@ Issue #8 验收原文：
 
 3. **读 lane 事件**：优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。
 
+**pig lane 等待语义（pane API，无 named agent）**：pig 完成一轮后 herdr 显示 **done** 而非 idle。**等本轮开始**：`pane send-text` + `pane send-keys enter` 之后**立即** `herdr agent wait <pane> --until working --timeout <MS>`——先 sleep 会错过短 working 窗口；**等本轮结束**：`herdr agent wait <pane> --until done --timeout <MS>`。`--until idle` 只在从未 working 过的初始空闲上可靠，**不得**当完成信号（工作过的空闲上必超时）。
+
 **drift 记账**：每轮 sweep 完成后把 `drift_checked_at`（UTC ISO，如 `2026-01-01T00:00:00Z`）与是否命中漂移写回 state（`drift: true|false`）。`used_hash != main_hash` 即**技能漂移**：state 记 `drift: true` 并写明两版 hash（`drift_versions: {used, main}`），**按主干版继续执行**（以其 §0/§3 语义为准），**不得静默沿用旧版**；两 hash 一致则记 `drift: false`（no_drift）。漂移命中后的后续动作只有一条：**按主干版继续，并在 §5 报告里列出**。随后按序执行：
 
 1. 重读 state.json；对每条运行 lane 执行 `herdr agent get <name>`，必要时 `read`；运行时长已超过其 `max_wall_minutes` 的 lane 按 §1 run 第 3 步「墙钟超时不等于失败」先取证再裁决，不直接置失败。
@@ -245,9 +248,9 @@ Issue #8 验收原文：
    - **③ 处置**：(a) 默认与成果一并 commit——优先同一 attempt 内让工人自己 commit；工人已收尾/不可用时编排者可代为 commit，须在 `decision_log` 标注「编排者代 commit」。(b) **禁止静默丢弃**：必须打回让工人 commit 或明确说明；该打回是洁净门整改、不是 §2 重试，`attempt` 不推进、`max_rounds` 不消耗；若最终决定丢弃，同样不消耗轮次，但 §5 报告 `Attention` 段必须列出被丢弃的语义改动摘要。
    处置完重跑 acceptance 命令：通过后把实际输出写入 state，状态更新为 `verified`；失败打回按 `attempt` 走（打回最多 2 轮——其 `max_rounds` 字段，默认 2，超限置 `blocked`）：
    - **`attempt=1`（首轮打回）**：`herdr agent prompt <agent> <打回指令> --wait --timeout <MS>` 复用同 pane。
-   - **`attempt=2`（唯一一次重派）**：换 fresh worker，顺序固定——① `herdr pane close <旧 pane-id>`；② `herdr agent get <旧 agent-name>` 与 `herdr pane get <旧 pane-id>` 双 `not_found` 验证；③ 新建 pane，必须带 `--env MANA_WORKER=1`（同 §2 dispatch）；④ `herdr agent start <新 agent 名> --kind pi --pane <新 pane-id> -- --exclude-tools ask_question`（**仍不得传 `--model`**）；⑤ 用合并 brief（§2 模板）投递。state 同步：`superseded_by_agent` 记旧 agent 名（旧名保留可对账），`agent_name`/`pane_id` 更新为新值，`attempt` 置 `2`。
+   - **`attempt=2`（唯一一次重派）**：换 fresh worker，顺序固定——① `herdr pane close <旧 pane-id>`；② `herdr agent get <旧 agent-name>` 与 `herdr pane get <旧 pane-id>` 双 `not_found` 验证；③ 新建 pane，必须带 `--env MANA_WORKER=1`（同 §2 dispatch）；④ `herdr agent start <新 agent 名> --kind pi --pane <新 pane-id> -- --exclude-tools ask_question`（**仍不得传 `--model`**；pig 线路此步对新 pane 改 `herdr pane run <pane> pig -a`，brief 投递同样走 `pane send-text`+`send-keys enter`，见 §2 pig 分支）；⑤ 用合并 brief（§2 模板）投递。state 同步：`superseded_by_agent` 记旧 agent 名（旧名保留可对账），`agent_name`/`pane_id` 更新为新值，`attempt` 置 `2`。
    打回修复等产生新 commit 的动作触发 §1 run 第 3 步失效规则：旧 `head_sha` 上的结论作废，重验必须在新 `head_sha` 上重跑 acceptance，并更新 `head_sha`/`verdict`。
-3. 工人报 `BLOCKED:` → 按 §2 的 needs_input 规则自决并重投（≤ 该 lane 的 `max_rounds`；attempt 语义与第 2 条一致：第 1 轮可同 pane，第 2 轮必须 fresh agent + 合并 brief）。若出现确认 UI（配置漂移）按 §0.7 查因裁决；仍不能自动放行的操作写入 state 的 `blocker` 并上报。
+3. 工人报 `BLOCKED:` → 按 §2 的 needs_input 规则自决并重投（≤ 该 lane 的 `max_rounds`；attempt 语义与第 2 条一致：第 1 轮可同 pane，第 2 轮必须 fresh agent + 合并 brief）。若出现确认 UI（配置漂移）按 §0.7 查因裁决；仍不能自动放行的操作写入 state 的 `blocker` 并上报。pig lane 的 needs_input 判定不依赖 herdr 状态机——pig 扩展无法拦截 `ctx.ui.confirm/select`、`blocked` 不可自报，只认工人自报的终态三行协议：`BLOCKED:` 开头、紧跟 `QUESTION:` 与 `RECOMMENDED:`。
 4. `verified` lane 立即 `herdr pane close <pane-id>`，再以 `agent get`、`pane get` 双 `not_found` 验证，状态置 `reclaimed`。不得关闭非本 run 创建的 pane。
 5. 所有 lane 都为 `reclaimed|blocked|failed` 才进入 landing；不得因关闭 worker 而遗失 state 或验收证据。
 
@@ -304,12 +307,14 @@ run 终态（全部 lane `landed|blocked|failed`）后做一次复盘，四个�
 | --- | --- |
 | 目标续航 | state.json + `mana-heartbeat.sh` 心跳为唯一权威；OMP goal runtime 仅为便利层（暴露 goal tool 时 arm） |
 | Pi lane dispatch | `herdr worktree create` + `herdr agent start --kind pi` |
-| 工人线路与模型 | 不传 `--model` 顺势吃 pi 默认；`herdr agent get` → session jsonl 首条 `model_change` 回读取证写 `state.lanes[].model` |
+| pig lane dispatch（可选线路） | 同 `herdr worktree create`；pane split 带 `--env MANA_WORKER=1` 后 `herdr pane run <pane> pig -a`（herdr 无 pig kind，走 pane API，不用 named agent） |
+| 工人线路与模型 | 不传 `--model` 顺势吃 pi 默认；`herdr agent get` → session jsonl 首条 `model_change` 回读取证写 `state.lanes[].model`；pig 取证扫 `~/.pig/agent/sessions` 最新一份（`agent_session` 恒为 null），同口径 |
 | worktree 隔离 | Herdr worktree workspace / Git worktree |
 | 工人打回、状态、确认 UI | `herdr agent prompt/get/read/wait/send-keys` |
+| pig 打回、等待、needs_input | `herdr pane send-text`+`send-keys enter`（`agent prompt/send-keys` 对 pig 报 `agent_not_ready`）；wait 用 `--until working`/`--until done`（`--until idle` 不作完成信号）；needs_input 只认 `BLOCKED:`/`QUESTION:`/`RECOMMENDED:` 文本协议 |
 | 工人不阻塞（提问/危险命令/审查门） | `MANA_WORKER=1`（pane `--env`）+ `extensions/pi/{mana-worker,safe-guard,precommit-review}.ts` |
 | orchestrator 不阻塞（方案选择） | 技能规则自决 + `ask: {timeout: 30}` 兜底 |
-| 工人回收 | `herdr pane close` + agent/pane `not_found` 双验证 |
+| 工人回收 | `herdr pane close` + agent/pane `not_found` 双验证（pi/pig 两线路同一命令与判定） |
 | 监督循环 | state.json + Herdr agent 状态 |
 | 状态文件 | 持锁 shell 内原子替换主仓 `.mana/<run-id>/state.json`，禁止直接 `write` 工具 |
 | OMP 角色 | 当前 orchestrator；不用 OMP subagent 代替 Pi worker |
@@ -317,4 +322,4 @@ run 终态（全部 lane `landed|blocked|failed`）后做一次复盘，四个�
 ## 自检
 
 每次 run 结束前断言：state.json 每个 lane status ∈ `reclaimed|blocked|failed|landed`；每个 landed lane 能给出授权范围、命中的 `tier_grant` 与其守卫命令输出、goal 终态、PR 号、tier 判定、验收命令输出、Pi pane 回收证据七者，否则 run 不算完成。
-另断言：每条 lane 的 pane 创建命令含 `--env MANA_WORKER=1`、`herdr agent start` 命令**不含** `--model`、`state.lanes[].model` 记有 session 首条 `model_change` 实测线路；发生重派的 lane 能给出 `attempt`、`superseded_by_agent` 与旧 pane 回收双 `not_found` 证据；run 期间零人工确认 UI（若出现，state 里有对应 `blocker` 与原文）；每轮工人 `BLOCKED:` 都有 `QUESTION:`/`RECOMMENDED:` 与 orchestrator 的自决记录。
+另断言：每条 lane 的 pane 创建命令含 `--env MANA_WORKER=1`、`herdr agent start` 命令**不含** `--model`、`state.lanes[].model` 记有 session 首条 `model_change` 实测线路；发生重派的 lane 能给出 `attempt`、`superseded_by_agent` 与旧 pane 回收双 `not_found` 证据；run 期间零人工确认 UI（若出现，state 里有对应 `blocker` 与原文）；每轮工人 `BLOCKED:` 都有 `QUESTION:`/`RECOMMENDED:` 与 orchestrator 的自决记录。含 pig lane 时另断言：pane 创建命令含 `--env MANA_WORKER=1`（与 pi 同）、`herdr pane run` 命令**不含** `--model`、`state.lanes[].model` 记有 `~/.pig/agent/sessions` 最新会话首条 `model_change` 实测 `provider/modelId`、回收后 `agent get` 与 `pane get` 双 `not_found`。

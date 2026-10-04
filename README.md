@@ -51,6 +51,8 @@ scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/�
 | forge CLI（`gh`/`fj`/`glab` 任一） | 开 Issue、建 PR、merge；未装则 PR 命令打印出来由你执行 |
 | 预检脚本 | Run 前跑 `bash scripts/mana-preflight.sh`（六门全过才派发；`MANA_PREFLIGHT_SKIP_SMOKE=1` 可跳线路冒烟） |
 
+pig 是可选工人线路：装了 pig 的机器可把 lane 工人换成 pig——herdr 通过 pig 侧自报扩展感知其状态，该扩展与预检 pig 门由仓内 `extensions/pig/` 与 `scripts/mana-preflight.sh` 保证；未装 pig 时只用 pi 工人，pig 门 SKIP 不拦。
+
 ## 安装
 
 **仓库正本 = 唯一事实源；用户级目录（`~/.omp/agent/skills`、`~/.omp/agent/extensions`、`~/.pi/agent/extensions`、`~/.agents/skills`）是安装产物**，由脚本覆盖，不要手改。
@@ -205,7 +207,7 @@ mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/ext
 export MANA_AUTONOMOUS=1
 ```
 
-Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`).
+Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`). pig is an optional worker route: where pig is installed, lanes may run on pig workers — herdr perceives their state through the pig-side self-report extension; both the extension and the preflight pig gate are guaranteed in-repo (`extensions/pig/`, `scripts/mana-preflight.sh`). Without pig everything runs on pi workers (the pig gate SKIPs).
 
 ## Usage
 
