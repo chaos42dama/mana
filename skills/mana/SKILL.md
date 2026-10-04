@@ -14,7 +14,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 1. **state 是唯一事实源**。状态存 `<repo>/.mana/<run-id>/state.json`（`.git/info/exclude` 排除 `.mana/`）。每次监督 sweep 先重读，再原子重写。会话记忆不可信。
 2. **DONE 是 claim 不是 verdict**。工人报完成后，orchestrator 必须亲自重跑该 lane 的验收命令，通过才信。
 3. **代码 lane 必须 worktree 隔离并由 Pi 执行**。用 `herdr worktree create` 创建本 run 工作区，在其专属 pane 执行 `herdr agent start <name> --kind pi`；不得用 OMP `task`/`workpool` 充当代码工人。只读 lane 同样优先 Pi pane；只有一次性无会话调查才可用 OMP `scout`。
-4. **lane 永不 push/merge**。发布权只在 orchestrator。
+4. **lane 永不 push/merge**。发布权只在 orchestrator，工人永不 push/merge。orchestrator 对远端的 push 仅限两类，且都只针对本 run 创建的分支：§4.1 的 verified 快照推送（每条 code lane 转 `verified` 后推一次 run 分支快照）与 landing push——两类都只追加新 commit，**禁止 force-push**，禁止推 main 或非本 run 的分支。
 5. **永不 force-push、永不碰非本 run 创建的分支/worktree/会话**。
 6. **一次授权覆盖已批准的 run，tier 由机器判定**（前置：当前仓库已满足「仓库前置条件」节，否则只走 context/intake）。state 写入 `authorization: {issue, approved_at, scope, autonomous_landing: true|false, tier_grants: [{patterns: [路径 glob], max_tier, guard, approved_at}]}`。
    - **`autonomous_landing` 默认 `true`**：CTO 一句 `/mana run #<issue>` 即为逐 run 授权（含“自主 PR→CI→merge→清理”），不再需要长参数。需要保留人工 merge 门时才显式 `/mana run #<issue> --manual-landing`（state 写 `false`）。
@@ -234,7 +234,28 @@ Issue #8 验收原文：
 ## §4 landing（仅 orchestrator）
 
 1. 仅对 `reclaimed` 且 acceptance 已记录通过的 code lane：orchestrator 在 state 登记的隔离分支提交、push；有冲突则在本 run worktree 解决并重验。
-2. 使用 forge CLI（以 `gh` 为例）`gh pr create --head <branch> --base main "#<issue>: <summary>"` 组织全部成果。
+   - **verified 快照推送**：每条 lane 状态转为 `verified` 后，由 **orchestrator**（不是工人；§0.4「lane 永不 push/merge」不变，本条只放开 orchestrator 侧）把该 run 分支推送到远端一次，形成远端耐久轨迹，供 `/mana resume` 对账使用——快照仅限 code lane（readonly lane 无 run 分支）。快照推送只追加新 commit——**禁止 force-push**（远端已有历史时只能追加）；禁止推 main；禁止推非本 run 创建的分支。push 失败记入 `state.blocker` 并在 §5 Attention 报告，**不阻断验收**——验收与推送是两件事。
+2. 使用 forge CLI（以 `gh` 为例）建 PR：`gh pr create --head <branch> --base main "#<issue>: <summary>"`，PR body 按下方固定模板写。**PR body 是简报不是实验记录**：评审者已有 diff，body 只回答「为什么存在 / 改了什么 / 刻意不做什么 / 可能影响谁 / 怎么证明的」，一分钟内读完。squash merge 的 commit body 就是 PR body；**全文超过约 40 行就砍**；不贴完整 SHA、不罗列 lane、不写逐文件清单、不写 `CLEAN` 之类结论——细节放链接产物。分段用 `##` 标题（不用粗体引导），顺序固定：
+
+   ```markdown
+   ## Why
+   <1–3 句：问题 + 做法>
+
+   ## What changed
+   <1–3 条；只在承载改动时才点名符号或路径；重命名/改指向写清两侧>
+
+   ## Scope
+   <1–3 条；必须明说覆盖什么、故意留下什么；不写逐文件清单>
+
+   ## Tradeoffs
+   <只写评审会问的取舍；没有真实取舍就整节省略>
+
+   ## Blast Radius
+   <1–2 句：谁/什么受影响、为何安全或危险；主干红灯时写出放着不管的代价>
+
+   ## Verification
+   <1–3 条；每条三件套：验收命令 + 实际输出摘要 + 绑定的 head SHA；没有实际输出的条目不许写>
+   ```
 3. 等 CI（如 GitHub Actions：`gh run list` / `gh run watch <run-id>`）与项目验收命令；失败则修复、重验，不能因“已授权”跳过。
 4. merge 前对 PR 的真实 diff 复跑授权守卫，把命令与输出写进 state：`authorization.autonomous_landing=true` 且守卫 `exit 0` → 执行 squash merge（`gh pr merge --squash --delete-branch` / `fj pr merge -M squash -d`）；守卫非 0（越出 `tier_grants`）→ 不合并，按 §0.6 上报 CTO。`--manual-landing`（`autonomous_landing=false`）时，PR/CI 后上报 CTO。
 5. PR merge 确认后，orchestrator 移除本 run worktree，删除本地/远端 feature branch，`git fetch --prune` 验证无残留；最后评论并关闭 Issue。
