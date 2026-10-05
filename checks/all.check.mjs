@@ -38,7 +38,9 @@ const files = readdirSync(checksDir)
   .sort() // 按文件名排序，输出稳定
   .filter((f) => !only || f.includes(only));
 if (files.length === 0) {
-  console.error(`✗ ${checksDir} 下没有匹配的 *.check.mjs${only ? `（--only ${only}）` : ""}`);
+  console.error(
+    `✗ ${checksDir} 下没有匹配的 *.check.mjs${only ? `（--only ${only}）` : ""}`,
+  );
   process.exit(1);
 }
 
@@ -62,9 +64,14 @@ for (const { file, label, extraArgs } of items) {
   }
   failed++;
   const timedOut = r.signal !== null; // 被 SIGTERM 杀掉 = 超时
-  console.log(`✗ ${name}${timedOut ? ` timeout (>${TIMEOUT_MS / 1000}s)` : ` exit=${r.status ?? r.signal}`}`);
+  console.log(
+    `✗ ${name}${timedOut ? ` timeout (>${TIMEOUT_MS / 1000}s)` : ` exit=${r.status ?? r.signal}`}`,
+  );
   // 失败项只带出子进程输出末尾 10 行，整段噪声会淹没摘要
-  const tail = `${r.stdout ?? ""}${r.stderr ?? ""}`.trimEnd().split("\n").slice(-10);
+  const tail = `${r.stdout ?? ""}${r.stderr ?? ""}`
+    .trimEnd()
+    .split("\n")
+    .slice(-10);
   for (const line of tail) console.log(`    ${line}`);
 }
 const rc = failed > 0 ? 1 : 0;
