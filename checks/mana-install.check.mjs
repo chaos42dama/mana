@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// 装机脚本契约自检（Issue #31）
-// 无参数：断言 scripts/mana-install.sh 存在且可执行、映射表覆盖四类目标、--check 判定用
-//         cmp -s（与 scripts/mana-preflight.sh 装机门同口径）、不含对配置/密钥路径的写操作、
+// 装机脚本契约自检（Issue #31；#59 起 references glob 展开）
+// 无参数：断言 scripts/mana-install.sh 存在且可执行、映射表覆盖四类目标 + references 目录 glob 展开、
+//         --check 判定用 cmp -s（与 scripts/mana-preflight.sh 装机门同口径）、不含对配置/密钥路径的写操作、
 //         SKILL.md intake 段含设计审查四红旗与 §13 承接声明、README 引用脚本且不再手写 cp 列表。
 // --self-test：合成 drill——在临时 HOME 下实跑脚本，验证「目标缺失/落后 → --check 非 0」
-//         「安装后 → --check 为 0」「重跑安装 → 目标 mtime 不变（幂等）」「错参 → 非 0」。
+//         「安装后 → --check 为 0」「重跑安装 → 目标 mtime 不变（幂等）」「错参 → 非 0」
+//         「references 目标缺失→非 0 / 安装后→0 / 重跑 mtime 不变 / 新增源文件即被发现（glob 而非硬编码）」。
 import assert from "node:assert/strict";
-import { readFileSync, existsSync, statSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,6 +42,10 @@ function assertContract() {
   assert.ok(sh.includes("extensions/pi/mana-worker.ts"), "映射表含工人侧扩展（~/.pi/agent/extensions/）");
   assert.ok(sh.includes(".pi/agent/extensions/"), "工人侧扩展目标目录");
   assert.ok(sh.includes(".omp/agent/extensions/"), "编排者侧扩展目标目录");
+  // 2b) references 目录按 glob 展开进映射（#59）：源是 glob 而非硬编码文件名清单
+  assert.ok(sh.includes("skills/mana/references/*.md"), "映射表含 references glob 源（skills/mana/references/*.md）");
+  assert.ok(sh.includes(".omp/agent/skills/mana/references/"), "references → ~/.omp/agent/skills/mana/references/");
+  assert.ok(!sh.includes("architect-rationale-template.md|") && !sh.includes("architect-runner-prompt.md|"), "不得把 references 文件名硬编码进 MAPPINGS");
   // 3) 幂等：安装前先 cmp -s 判等，相同不写
   const installBranch = sh.split("install)")[1]?.split("esac")[0] ?? "";
   assert.ok(!installBranch.trimStart().startsWith("cp"), "install 分支不得无条件 cp（先判等再写）");
@@ -113,6 +118,38 @@ function selfTest() {
     r = run(["--help"], env);
     assert.equal(r.code, 0, "--help → 0");
     console.log("✓ 合成 drill 通过：缺失/落后 → --check 非 0；安装后 → 0；重跑 mtime 不变；错参非 0");
+    // (g) references glob（#59）：缺失→非 0；安装后→0；幂等；新增源文件即被发现（glob 而非硬编码清单）
+    const refsDir = join(home, ".omp/agent/skills/mana/references");
+    rmSync(refsDir, { recursive: true });
+    r = run(["--check"], env);
+    assert.notEqual(r.code, 0, "references 目标缺失 → --check 非 0");
+    console.log("  ✓ references 目标缺失 → --check 非 0");
+    r = run([], env);
+    assert.equal(r.code, 0, "references 安装 exit 0");
+    r = run(["--check"], env);
+    assert.equal(r.code, 0, "references 安装后 --check 为 0");
+    console.log("  ✓ references 安装后 → --check 为 0");
+    const refTarget = join(refsDir, "architect-rationale-template.md");
+    assert.ok(existsSync(refTarget), "references 已安装");
+    const refBefore = statSync(refTarget).mtimeMs;
+    run([], env);
+    assert.equal(statSync(refTarget).mtimeMs, refBefore, "references 重跑安装 mtime 不变（幂等）");
+    console.log("  ✓ references 重跑安装 → 目标 mtime 不变（幂等）");
+    // 探针：往仓库正本目录临时加一个新 md，--check 必须立刻发现——证明映射是 glob 展开
+    // 而非硬编码清单（探针不进 PR，finally 保证清理）。
+    const probeSrc = join(REPO, "skills/mana/references/architect-extra-probe.md");
+    writeFileSync(probeSrc, "probe: 证明 references 走 glob 而非硬编码清单（#59 self-test）\n");
+    try {
+      r = run(["--check"], env);
+      assert.notEqual(r.code, 0, "新增源文件 → --check 非 0（glob 生效）");
+      console.log("  ✓ 新增源文件 architect-extra-probe.md → --check 由 0 变非 0（glob 而非硬编码）");
+    } finally {
+      rmSync(probeSrc, { force: true });
+    }
+    run([], env);
+    r = run(["--check"], env);
+    assert.equal(r.code, 0, "删探针重装后 --check 回 0");
+    console.log("  ✓ 删探针并重装 → --check 回 0");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
