@@ -1,11 +1,11 @@
 ---
 name: mana
-description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）。支持 intake、上下文重建（how/why/teach/recall/echo）与授权后的 Pi lane 自主执行、验收、PR、CI、merge、清理。Triggers: /mana, mana, 自主编排, Pi subagent, 自主 landing, /mana how, /mana why, /mana teach, /mana recall, /mana echo。"
+description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）。支持 intake、上下文重建（how/why/teach/recall/echo）与只读设计（architect），以及授权后的 Pi lane 自主执行、验收、PR、CI、merge、清理。Triggers: /mana, mana, 自主编排, Pi subagent, 自主 landing, /mana how, /mana why, /mana teach, /mana recall, /mana echo, /mana architect。"
 ---
 
 # /mana — OMP 自主编排
 
-`/mana` 有四个互斥入口：**context** 只读重建上下文；**intake** 把模糊目标收敛为可验收的 Issue；**run** 只在负责人（下称 CTO）对该 Issue 明确授权后，由当前 OMP session 作为 orchestrator，调度 Herdr 专属 pane 内的 **Pi** 工人完成 dispatch → supervise → verify → land → reclaim；**resume <run-id>** 先只读对账、再按「run 单 owner 执行入口」接管锁恢复既有 run 的监督，不重新 intake 或启动新 run。
+`/mana` 有四个互斥入口：**context** 只读（上下文重建 + architect 只读设计）；**intake** 把模糊目标收敛为可验收的 Issue；**run** 只在负责人（下称 CTO）对该 Issue 明确授权后，由当前 OMP session 作为 orchestrator，调度 Herdr 专属 pane 内的 **Pi** 工人完成 dispatch → supervise → verify → land → reclaim；**resume <run-id>** 先只读对账、再按「run 单 owner 执行入口」接管锁恢复既有 run 的监督，不重新 intake 或启动新 run。
 
 > 本技能假定运行环境为 **OMP（oh-my-pi）+ Pi 编码 agent + herdr**，不兼容其它 agent 宿主。
 
@@ -106,10 +106,10 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 | **importable internals** | 内部实现可被外部 import/引用（没有 seam 的模块，内部符号暴露成公共入口） | 新模块被边界外 import，或内部函数被当公共 API 用时：收窄导出面，只留一个入口 |
 | **hand-synced list** | 手工同步的清单（同一份内容多处各维护一份，靠人记得同步） | 看到「复制到另一处」「两处要保持一致」「记得同步」时：改成单一事实源 + 脚本/生成器同步，别靠人记 |
 
-本仓只提供**视角**，不在这里实现自动化的多线路设计审查：`/mana architect`（多线路 sketch + 交叉评审）由 **Issue #13** 承接，本文件不承诺未实现的能力。
+本仓只提供**视角**；自动化的多线路设计审查已落地为 `/mana architect`（多线路 sketch + 交叉评审，见 context 第 6 条），**Issue #13** 保留为该设计半边其余条目的总跟踪。
 本仓已有该视角的实证：装机同步曾是典型 hand-synced list（`~/.omp/agent/skills/mana/SKILL.md` 曾落后正本 165 行）——`scripts/mana-install.sh` 即消除它、把用户级目录变成仓库正本安装产物的手段；`scripts/mana-preflight.sh` 装机门同样用 `cmp -s` 对正本而不是再维护一份文件清单。
 
-### context（不启动 lane、不写业务代码）
+### context（不写业务代码；仅第 6 条 architect 可开只读 lane）
 
 `/mana how <范围>`、`/mana why <范围>`、`/mana teach <范围>`、`/mana recall <主题>`、`/mana echo <关键问题 或 #N>` 是高频上下文问答的最小等价入口，不另造多套项目技能。
 
@@ -118,7 +118,14 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 3. **teach**：复用 how 和 why 的证据，以中文分层解释“它是什么、怎样运作、为什么这样取舍”；涉及三项以上参与者时用递进图，不改代码。
 4. **recall**：默认回看本仓最近七天的会话记忆、`.mana/*/state.json`、Issue/PR、分支和 worktree 现状，产出至多五条的当前状态、未决问题和唯一下一步；用户给出完整状态时不重复挖掘。
 5. **echo**：目标对齐自检——检验的是**对当前任务目标的理解**是否偏移，不是项目状态（那是 recall）。只读：不写代码、不派 lane、不改 Issue、不碰 state。步骤：① 用自己的话重述「我认为你的目标是什么、我试图解决的问题是什么」；② 给 `#N` 时先读该 Issue 全文与已有评论，输出「Issue 原文目标 vs 我当前理解」的 diff 并标出偏移；③ 不清楚处**立即反问并停在这里，不落笔**；④ 末尾列出需要 CTO 拍板的分歧点清单。发现偏移只报告、不自行纠正，要改转 intake。回复优先评论到对应 Issue，只给结论 + 关键证据 + 方案。
-6. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权。
+6. **architect**：`/mana architect <范围>` 是只读设计入口——开多条独立只读 Pi lane 出结构互异的整体 sketch，交叉评审后合成一份 design package。五阶段：
+   - **A 接地**：以 `/mana how` 的证据为准；「命名了一个文件」不算接地，必须给出追踪过的模型（数据流、归属、边界）。设计若改动既有归属或分层，再用 `/mana why` 取 rationale 并当作约束。纯 greenfield 且无周边系统要集成时可跳过 A，但要在产物里写明跳过理由。
+   - **B 独立 sketch**：开 **2–3 条只读 Pi lane**（每条独立 pane + 独立上下文 + `--env MANA_WORKER=1`）：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <arch-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（**不传 `--model`**，§2 禁令同样适用——多样性来自 lane 独立性，不来自线路差异）。brief 用 `skills/mana/references/architect-runner-prompt.md`（注意：references 目前只在仓库 `skills/mana/references/`，尚未随 `scripts/mana-install.sh` 分发到用户级目录；跨仓使用先从仓库正本复制）。要求各候选**结构上互不相同**的整体形状——不是同一形状里的点修。
+   - **C 交叉评审与合成**：用**另一条**只读 lane 按 intake「设计审查四红旗」逐一筛选每个候选，命中红旗即否决；再按**接口深度**比较可行候选——公开面越小、藏起的复杂度越多越好。合成一份 design package，`Synthesis decision` 必须记录：选了哪个基底、吸收了什么、否决了什么及原因；单候选直接通过不合规。
+   - **D 交付**：design package 写 `.mana/<design-id>/design.md`（按 `skills/mana/references/architect-rationale-template.md` 八段），各候选原样留 `.mana/<design-id>/candidates/<n>.md`；对 CTO/用户的回复只给结论 + 关键证据 + 待决问题，不贴整份长文。
+   - **E 偏离即信号**：进入实现后，偏离 sketch 要 surfaced 而不是默默吸收；同形偏离反复出现即回炉重设计。但本入口不写实现代码，实现归 `/mana run`。
+   只读边界：不改业务代码、不 push、不 merge、不改 Issue、不写 `.mana/<run-id>/state.json`（`.mana/` 下只允许写 `.mana/<design-id>/`）；sketch 与评审 lane 用完按 §0.8 回收并双 `not_found` 验证；重复执行同一 `<范围>` 新建 `<design-id>`、不覆盖既有产物（确要覆盖须显式说明）。
+7. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条的只读 lane 是唯一显式例外）。
 
 ### run（已批准 Issue）
 

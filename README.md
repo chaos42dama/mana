@@ -121,6 +121,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 | --- | --- |
 | `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发。Issue 定稿先过 `python3 scripts/check-mana-issue.py` 骨架校验，`exit 0` 才可进 run |
 | `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；`/mana echo` 另做目标对齐自检 |
+| `/mana architect <范围>` | **context**：只读多线路设计入口——2–3 条独立 sketch lane 交叉评审合成 design package，落盘 `.mana/<design-id>/`；不写实现代码、不 push/merge，实现归 `/mana run` |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
 
 > `/mana run` 有前置：目标仓须逐项满足技能的「仓库前置条件」节（`scripts/mana-run-lock.py`、tier 守卫、`.git/info/exclude`、仓内红线定义、`tier_grants` 批准、工具链）。缺项只走 context/intake。
@@ -213,6 +214,7 @@ Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker
 
 - `/mana <goal>` — **intake**: clarify goal/non-goals/acceptance/risk paths into an acceptable Issue with suggested `tier_grants`; nothing is dispatched.
 - `/mana how|why|teach|recall|echo <scope>` — **context**: read-only Q&A; `/mana echo` additionally restates the current task goal so drift shows up immediately.
+- `/mana architect <scope>` — **context**: read-only multi-lane design entry — 2–3 independent sketch lanes cross-reviewed into one design package under `.mana/<design-id>/`; no implementation code, no push/merge (implementation belongs to `/mana run`).
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.
 
 `/mana run` has prerequisites: the target repo must satisfy the skill's repo-prerequisites checklist — `scripts/mana-run-lock.py`, the tier guard, `.git/info/exclude`, in-repo red-line definitions, an approved `tier_grants`, and the toolchain. Missing any of them means context/intake only.
