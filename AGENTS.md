@@ -33,5 +33,6 @@
 | 契约无常驻 drill，drill 随 run 结束失传 | drill 常驻在 `checks/*.check.mjs --self-test`（#31 起） | #28（复发 #29） |
 | herdr/gh CLI 参数形态误用 | §2 参数形态说明 + `checks/mana-orchestrator-contract.check.mjs`（CLI 形态断言：agent prompt/agent wait/pane split/agent start） | #27 |
 | `--wait` 超时被误当未投递 | §2「先 `agent get/read` 取证，不得重复 prompt」+ `checks/mana-orchestrator-contract.check.mjs`（超时 ≠ 未投递断言） | #24（复发 #27/#28/#29） |
+| 回归面手工枚举漏项 | `checks/all.check.mjs` 单命令覆盖（全部契约 check × 两种模式一次跑完，不早退） | #57 |
 
 新增检查请登记到本表（文件名 + 断言范围），防 drill 失传。

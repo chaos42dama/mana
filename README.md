@@ -29,6 +29,7 @@ extensions/pi/mana-worker.ts  # Pi 扩展：MANA_WORKER=1 下封禁交互式提�
 extensions/pi/mana-worker-compact.ts  # Pi 扩展：MANA_WORKER=1 下接管 session_before_compact 保真 brief（内联自检）
 extensions/pi/safe-guard.ts   # Pi 扩展：MANA_WORKER=1 下危险命令只告警、受保护路径硬阻断
 extensions/pi/precommit-review.ts  # Pi 扩展：MANA_WORKER=1 下关闭 pre-commit 审查门
+checks/all.check.mjs          # 契约 check 聚合 runner：一条命令跑全部 *.check.mjs 两种模式（无参数 + --self-test）
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
 checks/mana-verdict-ledger.check.mjs  # 验证账本契约自检：head_sha/verdict/decisions.tsv/失效规则（--self-test 跑合成 drill）
 checks/mana-orchestrator-contract.check.mjs  # 编排者侧契约自检：herdr CLI 形态/超时≠未投递/不锁线/交付洁净/回收双验证（--self-test 跑合成残缺负例）
@@ -78,9 +79,8 @@ bash scripts/mana-install.sh --dry-run
 自检（需要 Bun）：
 
 ```bash
-node checks/mana-install.check.mjs --self-test
-node checks/safe-guard.check.mjs
-# ✓ safe-guard 自主模式校验通过（5 组断言）
+node checks/all.check.mjs   # 一条命令跑全部契约 check 两种模式（无参数断言 + --self-test drill）；单点排查用 --only <子串>
+# ✓ 逐项 ✓ …（共 2×N 行）末行 ALL-16-rc=0
 PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts
 PI_SAFE_GUARD_SELFTEST=1 bun extensions/pi/safe-guard.ts
 PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts
