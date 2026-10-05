@@ -15,8 +15,9 @@
 #   bash scripts/mana-install.sh --dry-run    # 打印将执行的动作，不写；有漂移 exit 1
 #   bash scripts/mana-install.sh --help
 #
-# 只复制下表列出的文件；绝不触碰 settings.json / models.json / auth.json /
-# ~/.omp/agent/config.yml 等配置与密钥。
+# 只复制下表列出的文件（skills/mana/references/*.md 按 glob 展开，见 #59：新增
+# references 文件自动纳入装机比对，不把文件名写死在表里）；绝不触碰
+# settings.json / models.json / auth.json / ~/.omp/agent/config.yml 等配置与密钥。
 set -euo pipefail
 
 usage() {
@@ -63,6 +64,13 @@ MAPPINGS=(
   "extensions/safe-guard.ts|$HOME_DIR/.omp/agent/extensions/safe-guard.ts|"
   "extensions/mana-compact.ts|$HOME_DIR/.omp/agent/extensions/mana-compact.ts|"
 )
+
+# references 目录走 glob 展开（#59）：仓库正本目录就是清单，
+# 新增 references 文件自动逐文件比对，无需改本脚本。
+for _ref in "$REPO_ROOT"/skills/mana/references/*.md; do
+  [ -e "$_ref" ] || continue
+  MAPPINGS+=("skills/mana/references/$(basename "$_ref")|$HOME_DIR/.omp/agent/skills/mana/references/$(basename "$_ref")|")
+done
 
 hash_of() { sha256sum "$1" 2>/dev/null | cut -c1-12; }
 

@@ -67,7 +67,7 @@ bash scripts/mana-install.sh --check
 bash scripts/mana-install.sh --dry-run
 ```
 
-脚本只复制下表列出的文件（`cmp -s` 判定，与 `scripts/mana-preflight.sh` 装机门同口径），绝不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
+脚本只复制下表列出的文件（`cmp -s` 判定，与 `scripts/mana-preflight.sh` 装机门同口径；其中 `skills/mana/references/*.md` 按 glob 展开逐文件比对，新增 references 自动纳入装机），绝不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
 
 | 仓库正本 | 目标 |
 | --- | --- |
@@ -75,6 +75,7 @@ bash scripts/mana-install.sh --dry-run
 | `skills/mana/SKILL.md` | `~/.agents/skills/mana/SKILL.md`（父目录存在时） |
 | `extensions/pi/*.ts` | `~/.pi/agent/extensions/` |
 | `extensions/safe-guard.ts`、`extensions/mana-compact.ts` | `~/.omp/agent/extensions/` |
+| `skills/mana/references/*.md` | `~/.omp/agent/skills/mana/references/`（glob 展开，#59 起随脚本分发） |
 
 自检（需要 Bun）：
 
@@ -186,7 +187,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 
 ## Install
 
-**The repo checkout is the single source of truth; the user-level dirs (`~/.omp/agent/skills`, `~/.omp/agent/extensions`, `~/.pi/agent/extensions`, `~/.agents/skills`) are install artifacts** — always installed by the script, never hand-edited.
+**The repo checkout is the single source of truth; the user-level dirs (`~/.omp/agent/skills`, `~/.omp/agent/extensions`, `~/.pi/agent/extensions`, `~/.agents/skills`) are install artifacts** — always installed by the script, never hand-edited. `skills/mana/references/*.md` is distributed by the same script via glob expansion into `~/.omp/agent/skills/mana/references/` (#59): new reference files are picked up automatically, no file list to hand-maintain.
 
 ```bash
 # Install / repair (idempotent: identical content is not rewritten)
