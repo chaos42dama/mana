@@ -138,7 +138,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 | 入口 | 用途 |
 | --- | --- |
 | `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发。Issue 定稿先过 `python3 scripts/check-mana-issue.py` 骨架校验，`exit 0` 才可进 run |
-| `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；`/mana echo` 另做目标对齐自检 |
+| `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；how/why 支持并行只读取证 lane（how：Complex 拆切面 ≤ `max_parallel_lanes`；why：代码锚点先行 + 每证据类别一条 investigator + 四档证据分级）；结论默认不落盘，仅在回复里交付，明确要求才写 `.mana/<context-id>/`；`/mana echo` 另做目标对齐自检 |
 | `/mana architect <范围>` | **context**：只读多线路设计入口——2–3 条独立 sketch lane 交叉评审合成 design package，落盘 `.mana/<design-id>/`；不写实现代码、不 push/merge，实现归 `/mana run` |
 | `/mana prototype <决策问题>` | **context**：只读原型入口——throwaway 多变体原型 + 一个 switcher + 观测量回答一个具体决策，落盘 `.mana/<probe-id>/`；原型永不进主干，不承诺自动截图（UI 类只到能渲染 + 人工看） |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
@@ -244,7 +244,7 @@ pig is an optional worker route: where pig is installed, lanes may run on pig wo
 ## Usage
 
 - `/mana <goal>` — **intake**: clarify goal/non-goals/acceptance/risk paths into an acceptable Issue with suggested `tier_grants`; nothing is dispatched.
-- `/mana how|why|teach|recall|echo <scope>` — **context**: read-only Q&A; `/mana echo` additionally restates the current task goal so drift shows up immediately.
+- `/mana how|why|teach|recall|echo <scope>` — **context**: read-only Q&A; how/why support parallel read-only evidence lanes (how: Complex splits into non-overlapping facets up to `max_parallel_lanes`; why: code anchors first, one investigator per evidence category, four-tier evidence grading); conclusions are delivered in the reply by default and only written to `.mana/<context-id>/` when explicitly requested; `/mana echo` additionally restates the current task goal so drift shows up immediately.
 - `/mana architect <scope>` — **context**: read-only multi-lane design entry — 2–3 independent sketch lanes cross-reviewed into one design package under `.mana/<design-id>/`; no implementation code, no push/merge (implementation belongs to `/mana run`).
 - `/mana prototype <decision question>` — **context**: read-only prototype entry — throwaway multi-variant prototypes behind one switcher, decided by observation under `.mana/<probe-id>/`; prototypes never reach mainline, no promised auto-screenshots (UI gets to render + human eyeball only).
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.

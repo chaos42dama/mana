@@ -109,12 +109,12 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 本仓只提供**视角**；自动化的多线路设计审查已落地为 `/mana architect`（多线路 sketch + 交叉评审，见 context 第 6 条），**Issue #13** 保留为该设计半边其余条目的总跟踪。
 本仓已有该视角的实证：装机同步曾是典型 hand-synced list（`~/.omp/agent/skills/mana/SKILL.md` 曾落后正本 165 行）——`scripts/mana-install.sh` 即消除它、把用户级目录变成仓库正本安装产物的手段；`scripts/mana-preflight.sh` 装机门同样用 `cmp -s` 对正本而不是再维护一份文件清单。
 
-### context（不写业务代码；仅第 6/7 条 architect、prototype 可开只读 lane）
+### context（不写业务代码；仅第 1/2/6/7 条 how/why/architect/prototype 可开只读 lane）
 
 `/mana how <范围>`、`/mana why <范围>`、`/mana teach <范围>`、`/mana recall <主题>`、`/mana echo <关键问题 或 #N>` 是高频上下文问答的最小等价入口，不另造多套项目技能。
 
-1. **how**：以代码、运行命令、LSP 或 codebase-memory 为证据，说明当前架构、运行数据流、文件归属与边界；不把推测写成事实。
-2. **why**：先锚定代码和提交，再并行查 git/jj log/blame、Issue/PR 评论、项目文档与可用运行证据；输出事实、合理推断、未知项及来源。
+1. **how**：`/mana how <范围>` 以代码、运行命令、LSP 或 codebase-memory 为证据，说明当前架构、运行数据流、文件归属与边界；不把推测写成事实。**复杂度分流**：范围含糊先说出自己的理解再查（用户可纠正）。**Simple**（单模块、小工具、窄问题如「函数 X 怎么工作」）→ **不派 lane**，一条只读 explainer 单程走完；**Complex**（跨多文件/多服务、cross-cutting、全局架构概览）→ 拆成 **2–≤`max_parallel_lanes`** 个互不重叠的切面，每条一个**只读 Pi explorer lane**（dispatch 同 §2，**不传 `--model`**），brief 用 `skills/mana/references/how-explorer-prompt.md`。explorer **只取证不写散文**：找入口 → 追调用链 → 追数据流与归属边界；不要猜名字，要读代码；朝外产出是证据集合，面向人的解释留给合成环节。**合成**：把各 explorer 的发现合成一份 senior onboarding 级心智模型——数据怎么流、归属与边界在哪、哪些是推测；**推测必须显式标成推测**。lane 用完按 §0.8 回收并双 `not_found` 验证；不 push/merge/改 Issue；结论默认只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。
+2. **why**：`/mana why <范围>` 用**谨慎的调查者**姿态回答「这段代码为什么长成这样」。代码不携带动机——动机在 commit、PR、Issue、文档、对话里，不完整、有偏、常常缺失；装作读到了，就只会产出误导人的自信猜测。**代码锚点先行**：派 investigator 前必须拿到文件路径与行区间、关键符号、初始 commit 列表、从 merge commit 里抽出的 PR 号（`git blame -L <start>,<end> <file>`、`git log --follow -p -- <file>`、`git log --oneline -20 -- <file>`、`git log -1 --format=%B <commit>` 抽 `(#1234)`、`gh pr view <n> --json title,body,author,createdAt,mergedAt,labels,closingIssuesReferences,comments,reviews`）；**没有锚点不派 lane**。**并行取证**：按**本机实际可用**的证据类别派 lane（source control = `git` + `gh`；issue tracker = `gh issue` / `gh pr`；long-form docs = 仓库内文档与 session 记忆；`codebase-memory` MCP 可用则单列一类）。**每个类别一条 lane，各管一个来源，不要让一条 lane cover 多个来源**，brief 用 `skills/mana/references/why-investigator-prompt.md`；同时 running 的 investigator ≤ `max_parallel_lanes`（state 顶层预算，默认 2，与 code lane 同一预算），类别多于预算就回收一条再派一条；类别为空/查无证据要**写进缺口清单**（Document the null），不得跳过搜索。**合成**：由一条只读 synthesizer lane（回收完 investigator 后启动），brief 用 `skills/mana/references/why-epistemics.md`，按其四档输出——`direct`（有人**白纸黑字**写过为什么，如 PR 正文写「修的是用户有 >1000 条时无法分页」）、`supported`（有指向性证据但没直说）、`inference`（推断，必须写出推断链）、`unknown`（查不到，明确说查不到，含查证范围）；**每条结论要么带出处、要么带标签**，把 inference 写成 direct 属违规。lane 同样按 §0.8 回收并双 `not_found` 验证；**不传 `--model`**、不 push/merge/改 Issue；结论默认只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。
 3. **teach**：复用 how 和 why 的证据，以中文分层解释“它是什么、怎样运作、为什么这样取舍”；涉及三项以上参与者时用递进图，不改代码。
 4. **recall**：默认回看本仓最近七天的会话记忆、`.mana/*/state.json`、Issue/PR、分支和 worktree 现状，产出至多五条的当前状态、未决问题和唯一下一步；用户给出完整状态时不重复挖掘。
 5. **echo**：目标对齐自检——检验的是**对当前任务目标的理解**是否偏移，不是项目状态（那是 recall）。只读：不写代码、不派 lane、不改 Issue、不碰 state。步骤：① 用自己的话重述「我认为你的目标是什么、我试图解决的问题是什么」；② 给 `#N` 时先读该 Issue 全文与已有评论，输出「Issue 原文目标 vs 我当前理解」的 diff 并标出偏移；③ 不清楚处**立即反问并停在这里，不落笔**；④ 末尾列出需要 CTO 拍板的分歧点清单。发现偏移只报告、不自行纠正，要改转 intake。回复优先评论到对应 Issue，只给结论 + 关键证据 + 方案。
@@ -134,7 +134,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - **交付**：呈现变体、证据（观测量/渲染结果）、取舍与**建议**，并明说原型是 throwaway、不是可交付代码；产物写 `.mana/<probe-id>/probe.md` + `variants/<n>/`；建议方向交回 `/mana architect`（要结构）或 `/mana run`（要实现）。
    与 architect 的分工：architect 决定**结构**、不写代码；prototype 决定**行为/交互/时序**、原型永不进主干、不得被当作实现复用；两者都不 landing，落地归 `/mana run`。
    硬边界：原型代码永不进主干（不 push、不建 PR、不 merge、不落业务目录）；scratch 目录可留（便于复看），但 prototype lane 用完按 §0.8 回收并双 `not_found` 验证；不写 `.mana/<run-id>/state.json`（`.mana/` 下只允许写 `.mana/<probe-id>/`）；不改 Issue；命令模板**不传 `--model`**（多样性来自 lane 独立性）。
-8. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条与 prototype 第 7 条的只读 lane 是仅有的两个显式例外）。
+8. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条、prototype 第 7 条与 how/why 的只读取证 lane——第 1/2 条 Complex/并行取证路径——是仅有的三个显式例外）。
 
 ### run（已批准 Issue）
 
