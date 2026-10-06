@@ -63,6 +63,9 @@ MAPPINGS=(
   "extensions/pi/safe-guard.ts|$HOME_DIR/.pi/agent/extensions/safe-guard.ts|"
   "extensions/safe-guard.ts|$HOME_DIR/.omp/agent/extensions/safe-guard.ts|"
   "extensions/mana-compact.ts|$HOME_DIR/.omp/agent/extensions/mana-compact.ts|"
+  # pig 是可选工人线路：未装 pig 的机器没有 ~/.pig/agent/extensions，
+  # 用 cond 语义（父目录存在才安装/比对）跳过而非报错（否则未装 pig 机器 exit 2）。
+  "extensions/pig/herdr-agent-state.ts|$HOME_DIR/.pig/agent/extensions/herdr-agent-state.ts|$HOME_DIR/.pig/agent/extensions"
 )
 
 # references 目录走 glob 展开（#59）：仓库正本目录就是清单，
