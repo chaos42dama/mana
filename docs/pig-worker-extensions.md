@@ -143,3 +143,5 @@ Answer from memory: feature string T4-COMPACT-PROOF; first char DONE: or BLOCKED
 - `~/.pig/agent/extensions/` 四份与仓内 `cmp` 全等（复核前后各一次，详见 commit 记录）；
 - `~/.pi/agent/extensions/` 未触碰（本 run 全程无指向该目录的写操作；可用 `ls -la --time-style=full-iso ~/.pi/agent/extensions/*.ts` 对照本 run 起始时间戳确认 mtime 未变）；
 - 四块 TPANE（w2W:p4/p5/p6/p7）已全部 close，`herdr pane list` 无 pig agent 残留。
+
+> 安装与验证的最新口径见 README「pig 工人线路(可选)」节:`bash scripts/mana-install.sh` 已纳入 pig 侧扩展(条件安装),验证用 `bash scripts/mana-preflight.sh`;本文手工 cp 命令仅作历史记录,已被脚本取代。

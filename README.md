@@ -75,6 +75,7 @@ bash scripts/mana-install.sh --dry-run
 | `skills/mana/SKILL.md` | `~/.agents/skills/mana/SKILL.md`（父目录存在时） |
 | `extensions/pi/*.ts` | `~/.pi/agent/extensions/` |
 | `extensions/safe-guard.ts`、`extensions/mana-compact.ts` | `~/.omp/agent/extensions/` |
+| `extensions/pig/herdr-agent-state.ts` | `~/.pig/agent/extensions/`（父目录存在时；见下节） |
 | `skills/mana/references/*.md` | `~/.omp/agent/skills/mana/references/`（glob 展开，#59 起随脚本分发） |
 
 自检（需要 Bun）：
@@ -103,7 +104,23 @@ python3 scripts/test_mana_run_lock.py
 # Ran 7 tests ... OK
 ```
 
-pig 宿主另装 herdr 状态自报扩展：`mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/`（见 `extensions/pig/README.md`）。
+pig 宿主的 herdr 状态自报扩展已纳入装机清单，不再手工 cp——见下节「pig 工人线路（可选）」（扩展背景见 `extensions/pig/README.md`）。
+
+### pig 工人线路（可选）
+
+**何时需要**：想让 `/mana run` 把 lane 工人换成 pig（而非默认 pi）时才装；只用 pi 工人的机器可整节跳过。
+
+**安装（先装 pig，再跑装机脚本）**：先安装 pig 本体（产生 `~/.pig/agent/extensions/` 目录），再跑一次装机脚本，pig 侧扩展随之落位：
+
+```bash
+bash scripts/mana-install.sh
+```
+
+脚本的 cond 语义保证：`~/.pig/agent/extensions/` 不存在时该条目显示 `skip（父目录不存在）` 并继续，不报错。
+
+**验证**：跑 `bash scripts/mana-preflight.sh`，看输出里 `pig 门:` 那一行——扩展在位且 `reportArgs()` 自检绿即 `ok`。注意：**preflight 只发现并报错，不负责安装**；发现缺失时回到上一条用装机脚本修复。
+
+**未装 pig**：该门 SKIP 不拦，`/mana run` 照常只用 pi 工人跑完。
 
 ### 开启自主模式（一次性授权）
 
@@ -204,13 +221,25 @@ cp mana/scripts/check-mana-grant-scope.py scripts/
 cp mana/scripts/mana-run-lock.py scripts/
 python3 scripts/check-mana-grant-scope.py --self-test
 python3 scripts/test_mana_run_lock.py   # optional: 7 lock tests
-# pig host: pig-side herdr state extension
-mkdir -p ~/.pig/agent/extensions && cp mana/extensions/pig/*.ts ~/.pig/agent/extensions/  # see extensions/pig/README.md
+# pig host: pig-side herdr state extension rides the same install script (see "pig worker route (optional)" below)
+bash scripts/mana-install.sh
 # Autonomous mode (one-shot authorization)
 export MANA_AUTONOMOUS=1
 ```
 
-Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`). pig is an optional worker route: where pig is installed, lanes may run on pig workers — herdr perceives their state through the pig-side self-report extension; both the extension and the preflight pig gate are guaranteed in-repo (`extensions/pig/`, `scripts/mana-preflight.sh`). Without pig everything runs on pi workers (the pig gate SKIPs).
+Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`).
+
+### pig worker route (optional)
+
+**When you need it**: only when you want `/mana run` lanes to run on pig workers instead of the default pi workers. Skip this section on pi-only machines.
+
+**Install (install pig first, then run the install script)**: install pig itself first (this creates `~/.pig/agent/extensions/`), then run `bash scripts/mana-install.sh` — the pig-side extension is installed along with everything else. The script's conditional semantics guarantee that a missing `~/.pig/agent/extensions/` shows `skip (parent dir absent)` and continues instead of erroring.
+
+**Verify**: run `bash scripts/mana-preflight.sh` and look at the `pig 门:` line — `ok` means the extension is in place and its `reportArgs()` self-check is green. Note: **preflight only detects and reports, it never installs**; if it reports a missing extension, fix it with the install script above.
+
+**Without pig**: the gate SKIPs and `/mana run` runs entirely on pi workers.
+
+pig is an optional worker route: where pig is installed, lanes may run on pig workers — herdr perceives their state through the pig-side self-report extension; both the extension and the preflight pig gate are guaranteed in-repo (`extensions/pig/`, `scripts/mana-preflight.sh`).
 
 ## Usage
 
