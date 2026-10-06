@@ -1,11 +1,11 @@
 ---
 name: mana
-description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）。支持 intake、上下文重建（how/why/teach/recall/echo）与只读设计（architect），以及授权后的 Pi lane 自主执行、验收、PR、CI、merge、清理。Triggers: /mana, mana, 自主编排, Pi subagent, 自主 landing, /mana how, /mana why, /mana teach, /mana recall, /mana echo, /mana architect。"
+description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）。支持 intake、上下文重建（how/why/teach/recall/echo）、只读设计（architect）与只读原型（prototype），以及授权后的 Pi lane 自主执行、验收、PR、CI、merge、清理。Triggers: /mana, mana, 自主编排, Pi subagent, 自主 landing, /mana how, /mana why, /mana teach, /mana recall, /mana echo, /mana architect, /mana prototype。"
 ---
 
 # /mana — OMP 自主编排
 
-`/mana` 有四个互斥入口：**context** 只读（上下文重建 + architect 只读设计）；**intake** 把模糊目标收敛为可验收的 Issue；**run** 只在负责人（下称 CTO）对该 Issue 明确授权后，由当前 OMP session 作为 orchestrator，调度 Herdr 专属 pane 内的 **Pi** 工人完成 dispatch → supervise → verify → land → reclaim；**resume <run-id>** 先只读对账、再按「run 单 owner 执行入口」接管锁恢复既有 run 的监督，不重新 intake 或启动新 run。
+`/mana` 有四个互斥入口：**context** 只读（上下文重建 + architect 只读设计 + prototype 只读原型）；**intake** 把模糊目标收敛为可验收的 Issue；**run** 只在负责人（下称 CTO）对该 Issue 明确授权后，由当前 OMP session 作为 orchestrator，调度 Herdr 专属 pane 内的 **Pi** 工人完成 dispatch → supervise → verify → land → reclaim；**resume <run-id>** 先只读对账、再按「run 单 owner 执行入口」接管锁恢复既有 run 的监督，不重新 intake 或启动新 run。
 
 > 本技能假定运行环境为 **OMP（oh-my-pi）+ Pi 编码 agent + herdr**，不兼容其它 agent 宿主。
 
@@ -109,7 +109,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 本仓只提供**视角**；自动化的多线路设计审查已落地为 `/mana architect`（多线路 sketch + 交叉评审，见 context 第 6 条），**Issue #13** 保留为该设计半边其余条目的总跟踪。
 本仓已有该视角的实证：装机同步曾是典型 hand-synced list（`~/.omp/agent/skills/mana/SKILL.md` 曾落后正本 165 行）——`scripts/mana-install.sh` 即消除它、把用户级目录变成仓库正本安装产物的手段；`scripts/mana-preflight.sh` 装机门同样用 `cmp -s` 对正本而不是再维护一份文件清单。
 
-### context（不写业务代码；仅第 6 条 architect 可开只读 lane）
+### context（不写业务代码；仅第 6/7 条 architect、prototype 可开只读 lane）
 
 `/mana how <范围>`、`/mana why <范围>`、`/mana teach <范围>`、`/mana recall <主题>`、`/mana echo <关键问题 或 #N>` 是高频上下文问答的最小等价入口，不另造多套项目技能。
 
@@ -125,7 +125,16 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - **D 交付**：design package 写 `.mana/<design-id>/design.md`（按 `skills/mana/references/architect-rationale-template.md` 八段），各候选原样留 `.mana/<design-id>/candidates/<n>.md`；对 CTO/用户的回复只给结论 + 关键证据 + 待决问题，不贴整份长文。
    - **E 偏离即信号**：进入实现后，偏离 sketch 要 surfaced 而不是默默吸收；同形偏离反复出现即回炉重设计。但本入口不写实现代码，实现归 `/mana run`。
    只读边界：不改业务代码、不 push、不 merge、不改 Issue、不写 `.mana/<run-id>/state.json`（`.mana/` 下只允许写 `.mana/<design-id>/`）；sketch 与评审 lane 用完按 §0.8 回收并双 `not_found` 验证；重复执行同一 `<范围>` 新建 `<design-id>`、不覆盖既有产物（确要覆盖须显式说明）。
-7. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条的只读 lane 是唯一显式例外）。
+7. **prototype**：`/mana prototype <决策问题>` 是只读原型入口——开独立只读 Pi lane（dispatch 同 §2：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <probe-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`，**不传 `--model`**；brief 用 `skills/mana/references/prototype-switcher-prompt.md`）用最轻的栈做 throwaway 多变体原型，用观测量回答一个具体决策问题，原型永不进主干。五步（每步有产出与停止条件）：
+   - **定决策**：先写清这个原型为哪个决定服务（布局 / 交互 / 密度，或行为·时序·方案取舍），决策一句话写进产物；**没有决策就没有原型**——说不出要决定什么就停，要结构转 `/mana architect`，要实现转 `/mana run`。
+   - **取材**（仅当设计空间开放）：找先例、列 moodboard 供 CTO/用户挑方向，产出为方向清单；方向已定则跳过并在产物里写明「方向已定，跳过取材」。
+   - **throwaway 构建**：隔离 scratch 目录（默认 `.mana/<probe-id>/`，可按 CTO 决策用仓库外自指定 scratch 路径但必须记进产物），用最轻的栈（vanilla HTML/CSS/JS 或最小脚本），不引生产框架、不写测试、不做抽象；显式声明这是 throwaway；停止条件为 scratch 路径与构建说明已记进产物。
+   - **多变体 + 一个 switcher**：比较备选时把各变体放在**一个开关**（按钮或按键）后面，每变体有标签；单变体不算原型价值——确属单变体时须写明理由并改判为「草稿」而非原型。
+   - **观测量即测试**：按匹配面验证——CLI/脚本类用输出、时序、计数（每变体记命令 + 实际输出）；UI 类只做到「能渲染 + 人工看」，**不承诺自动截图**（本仓无 control-ui/playwright 类实机驱动）；停止条件为每个变体至少一条观测量或渲染确认。
+   - **交付**：呈现变体、证据（观测量/渲染结果）、取舍与**建议**，并明说原型是 throwaway、不是可交付代码；产物写 `.mana/<probe-id>/probe.md` + `variants/<n>/`；建议方向交回 `/mana architect`（要结构）或 `/mana run`（要实现）。
+   与 architect 的分工：architect 决定**结构**、不写代码；prototype 决定**行为/交互/时序**、原型永不进主干、不得被当作实现复用；两者都不 landing，落地归 `/mana run`。
+   硬边界：原型代码永不进主干（不 push、不建 PR、不 merge、不落业务目录）；scratch 目录可留（便于复看），但 prototype lane 用完按 §0.8 回收并双 `not_found` 验证；不写 `.mana/<run-id>/state.json`（`.mana/` 下只允许写 `.mana/<probe-id>/`）；不改 Issue；命令模板**不传 `--model`**（多样性来自 lane 独立性）。
+8. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条与 prototype 第 7 条的只读 lane 是仅有的两个显式例外）。
 
 ### run（已批准 Issue）
 
