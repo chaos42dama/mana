@@ -52,7 +52,7 @@ scripts/test_mana_selftest.py      # 自检入口回归测试（含两条真负�
 | git 仓库 | 从主 checkout 运行，不要在链接 worktree 里发起 run |
 | `python3` | 守卫脚本与状态探测 |
 | forge CLI（`gh`/`fj`/`glab` 任一） | 开 Issue、建 PR、merge；未装则 PR 命令打印出来由你执行 |
-| 预检脚本 | Run 前跑 `bash scripts/mana-preflight.sh`（六门全过才派发；`MANA_PREFLIGHT_SKIP_SMOKE=1` 可跳线路冒烟） |
+| 预检脚本 | Run 前跑 `bash scripts/mana-preflight.sh`（六门全过才派发；线路门对 `pi -p` 冒烟三态分类 healthy/capacity/unavailable，额度·速率·并发类失败单独报 capacity，并判定默认线漂移——`.mana/*/state.json` 的 `worker_model` ≠ 当前 settings 默认线即 FAIL，列 baseline/当前值取证；`MANA_PREFLIGHT_SKIP_SMOKE=1` 可跳线路冒烟） |
 
 pig 是可选工人线路：装了 pig 的机器可把 lane 工人换成 pig——herdr 通过 pig 侧自报扩展感知其状态，该扩展与预检 pig 门由仓内 `extensions/pig/` 与 `scripts/mana-preflight.sh` 保证；未装 pig 时只用 pi 工人，pig 门 SKIP 不拦。
 
@@ -293,7 +293,7 @@ MANA_AUTONOMOUS=1 omp
 # Do NOT add `export MANA_AUTONOMOUS=1` to ~/.bashrc: it would disable safe-guard for all OMP sessions.
 ```
 
-Requirements: [OMP](https://github.com/can1357/oh-my-pi), [herdr](https://herdr.dev), a [Pi coding agent](https://github.com/badlogic/pi-mono) (npm `@earendil-works/pi-coding-agent`) with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`).
+Requirements: [OMP](https://github.com/can1357/oh-my-pi), [herdr](https://herdr.dev), a [Pi coding agent](https://github.com/badlogic/pi-mono) (npm `@earendil-works/pi-coding-agent`) with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`). The preflight line gate classifies the `pi -p` smoke test three ways (healthy / capacity / unavailable — quota, rate and concurrency failures report `capacity` separately) and fails closed on default-route drift: a `.mana/*/state.json` `worker_model` differing from the current settings default fails the preflight with baseline/current-value evidence.
 
 ### pig worker route (optional)
 
