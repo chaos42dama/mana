@@ -37,6 +37,8 @@ scripts/check-mana-grant-scope.py  # tier 授权守卫：路径 glob + toml 键�
 scripts/check-mana-issue.py        # intake Issue 骨架校验：6 段缺项即非 0，run 前自证（配套 test_check_mana_issue.py）
 scripts/mana-run-lock.py           # run 单 owner 协作锁入口（flock + exec；7 组测试见 test_mana_run_lock.py）
 scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/线路/扩展自检/装机/配置；任一 FAIL 非 0 即停）
+scripts/mana-selftest.sh           # 全仓自检入口（10 步不早退：契约+守卫/run 锁/issue 自检+五扩展；--list/--quick/--only）
+scripts/test_mana_selftest.py      # 自检入口回归测试（含两条真负例：注入钩子必须真非 0）
 ```
 
 ## 要求
@@ -81,6 +83,8 @@ bash scripts/mana-install.sh --dry-run
 自检（需要 Bun）：
 
 ```bash
+bash scripts/mana-selftest.sh   # 全仓自检 10 步一条命令（契约 check + 守卫/run 锁/issue 自检与测试 + 五扩展内联自检）；
+                               # --quick 只跑前 5 步（run 预检 d 门用这档）；--only <子串> 按步骤名单点排查；--list 只列步骤
 node checks/all.check.mjs   # 一条命令跑全部契约 check 两种模式（无参数断言 + --self-test drill）；单点排查用 --only <子串>
 # ✓ 逐项 ✓ …（共 2×N 行）末行 ALL-16-rc=0
 PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts
