@@ -16,7 +16,7 @@
 
 ## run 基础设施
 
-- scripts/mana-run-lock.py、scripts/check-mana-grant-scope.py、scripts/check-mana-issue.py（intake Issue 骨架校验）属 run 基础设施，改动须单独授权。
+- scripts/mana-run-lock.py、scripts/check-mana-grant-scope.py、scripts/check-mana-issue.py（intake Issue 骨架校验）、scripts/mana-selftest.sh（全仓自检入口，预检 d 门回归面）属 run 基础设施，改动须单独授权。
 
 ## 规则 ↔ 强制手段 ↔ 首次发现 run
 

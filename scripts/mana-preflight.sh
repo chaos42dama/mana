@@ -76,20 +76,35 @@ if ! grep -qF -- "$PROVIDER" <<<"$LIST_OUT" && ! grep -qF -- "$MODEL" <<<"$LIST_
 fi
 
 # ── d. 自检门（全部从 repo 根实跑） ─────────────────────────────────────────
+# 末条带 --force-contracts 强制契约参数：顶层预检必真跑 contracts；嵌套重入（pig-gate check
+# 反向调回预检）由自检入口自身的环境标记在自检侧切断；阴性注入上下文除外（见循环内注释）。
 SELFTESTS=(
   "PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts"
   "PI_SAFE_GUARD_SELFTEST=1 bun extensions/pi/safe-guard.ts"
   "PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts"
   "PI_MANA_WORKER_COMPACT_SELFTEST=1 bun extensions/pi/mana-worker-compact.ts"
   "MANA_COMPACT_SELFTEST=1 bun extensions/mana-compact.ts"
-  "bun checks/safe-guard.check.mjs"
+  "bash scripts/mana-selftest.sh --quick --force-contracts"
 )
 for t in "${SELFTESTS[@]}"; do
   # -u MANA_WORKER：precommit-review 自检的 decideCommit 默认参读 env，工人 pane 里跑会自证失败；
   # 预检验证的是扩展逻辑本身，剥掉 pane 的工人态。
+  # 阴性注入上下文（SKIP_SMOKE 只由测试场景设置）里给自检项预置嵌套标记跳过 contracts：
+  # 场景预检若重入 contracts 会经 all.check 再入 pig-gate check，其 setupEnv 会 rmSync 本场景
+  # 正在用的 .tmp-pig-gate-check scratch，外层装机门必炸；正常预检不设标记，contracts 照跑。
+  case "$t" in
+  *mana-selftest*) [ -n "${MANA_PREFLIGHT_SKIP_SMOKE:-}" ] && t="MANA_SELFTEST_ACTIVE=1 $t" ;;
+  esac
   (cd "$REPO_ROOT" && env -u MANA_WORKER bash -c "$t") >/dev/null 2>&1 || FAIL "自检门: $t 非 0（在 $REPO_ROOT 实跑失败）"
   OK "自检门: $t"
 done
+# 负例钩子（仅供测试注入，正常使用不要设）：MANA_PREFLIGHT_SELFTEST_CMD 非空时追加执行，
+# 非 0 ⇒ FAIL（证明自检门对失败真的非 0，防永真负例）。
+if [ -n "${MANA_PREFLIGHT_SELFTEST_CMD:-}" ]; then
+  (cd "$REPO_ROOT" && env -u MANA_WORKER bash -c "$MANA_PREFLIGHT_SELFTEST_CMD") >/dev/null 2>&1 ||
+    FAIL "自检门: MANA_PREFLIGHT_SELFTEST_CMD 非 0（注入命令: $MANA_PREFLIGHT_SELFTEST_CMD）"
+  OK "自检门: MANA_PREFLIGHT_SELFTEST_CMD（注入命令: $MANA_PREFLIGHT_SELFTEST_CMD）"
+fi
 
 # ── e. 装机门（存在性=硬失败；cmp 漂移=WARN，功能一致性以自检实跑为门） ──────
 PI_EXT="$HOME/.pi/agent/extensions"
