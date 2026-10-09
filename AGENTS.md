@@ -35,5 +35,6 @@
 | `--wait` 超时被误当未投递 | §2「先 `agent get/read` 取证，不得重复 prompt」+ `checks/mana-orchestrator-contract.check.mjs`（超时 ≠ 未投递断言） | #24（复发 #27/#28/#29） |
 | 回归面手工枚举漏项 | `checks/all.check.mjs` 单命令覆盖（全部契约 check × 两种模式一次跑完，不早退） | #57 |
 | `/mana architect` 的多线路设计入口与两份 references 不得被静默删改 | `checks/mana-architect-contract.check.mjs`（8 组断言）+ `scripts/mana-install.sh`（references glob 映射） | #55 |
+| 默认线漂移（settings 默认线 ≠ run `state.worker_model`；run 期间默认线不得切换） | `scripts/mana-preflight.sh` 线路门（三态冒烟 healthy/capacity/unavailable + drift FAIL，fail-closed，只读）+ `checks/mana-preflight-line.check.mjs`（四场景 + `--self-test` 负例：删容量信号/删 drift 判定必须失败） | #73 |
 
 新增检查请登记到本表（文件名 + 断言范围），防 drill 失传。

@@ -41,32 +41,73 @@ grep -q -- --exclude-tools "$HELP_TMP" \
 rm -f "$HELP_TMP"
 OK "pi 解析门: $PI_REAL ($PI_VERSION, --exclude-tools 可用)"
 
-# ── c. 线路门 ────────────────────────────────────────────────────────────────
+# ── c. 线路门（三态冒烟 + 默认线漂移，两维独立裁决，均 fail-closed） ─────────
 SETTINGS="$HOME/.pi/agent/settings.json"
 WORKER_MODEL="$(jq -r 'if has("defaultProvider") and has("defaultModel") then .defaultProvider+"/"+.defaultModel else empty end' "$SETTINGS" 2>/dev/null)" \
   || FAIL "线路门: $SETTINGS 读取失败（文件缺失或非 JSON）"
 [ -n "$WORKER_MODEL" ] || FAIL "线路门: $SETTINGS 缺 defaultProvider/defaultModel（worker_model 不得猜）"
-OK "线路门: 默认线 $WORKER_MODEL"
 
+# 容量信号集（grep -iE，大小写不敏感）集中在这一处。「容量」口径=额度/速率/并发
+# （429/rate limit/quota/余额/overloaded/529）；不含上下文窗口容量（那是 compaction 的题）。
+# 分类命中优先级：healthy > capacity > unavailable——容量信号先于兜底判，
+# 含 "capacity" 字样的连接错误也归 capacity（CTO 拍板口径）。
+CAPACITY_RE='429|rate.?limit|quota|insufficient|balance|余额|额度|overload|529|capacity'
+# 三态分类纯函数：输入冒烟 rc + 输出文本，stdout 输出 healthy|capacity|unavailable。
+# healthy: rc=0，或 rc=124 且已应答 OK（pi 收尾挂起，判活按应答计）；
+# capacity: 非健康且命中容量信号；unavailable: 其余（非 0/无输出/连接·认证·模型不存在，模糊一律归此）。
+classify_line() {
+  local rc="$1" out="$2"
+  if [ "$rc" -eq 0 ] || { [ "$rc" -eq 124 ] && grep -q 'OK' <<<"$out"; }; then
+    printf healthy
+  elif grep -qiE "$CAPACITY_RE" <<<"$out"; then
+    printf capacity
+  else
+    printf unavailable
+  fi
+}
+
+# 维度一：冒烟三态。判活只能用 -p 冒烟，不能拿 --list-models 目录匹配：目录不全、
+# provider/model 分列都会骗过 grep。ponytail: pi 0.99.1 实测应答 OK 后进程可挂住不退出
+# （rc=124），故按应答内容判活，rc 作辅助；阴性对照（坏线路）0.7s 快速失败且无 OK 输出。
+# ponytail: $(timeout … pi …) 会死等——timeout 杀主进程后子进程仍握住 stdout 管道，命令替换等不到 EOF；
+# 改写临时文件再读，timeout 返回即可取快照。
+LINE_STATE="skipped"
 if [ "${MANA_PREFLIGHT_SKIP_SMOKE:-}" = "1" ]; then
   WARN "线路门: pi -p 冒烟已跳过（MANA_PREFLIGHT_SKIP_SMOKE=1，仅供阴性测试）"
 else
-  # 判活只能用 -p 冒烟，不能拿 --list-models 目录匹配：目录不全、provider/model 分列都会骗过 grep。
-  # ponytail: pi 0.99.1 实测应答 OK 后进程可挂住不退出（rc=124），故按应答内容判活，rc 作辅助；
-  # 阴性对照（坏线路）0.7s 快速失败且无 OK 输出，仍走 FAIL。
-  # ponytail: $(timeout … pi …) 会死等——timeout 杀主进程后子进程仍握住 stdout 管道，命令替换等不到 EOF；
-  # 改写临时文件再读，timeout 返回即可取快照。
   SMOKE_TMP="$(mktemp)"; trap 'rm -f "$SMOKE_TMP"' EXIT
   timeout -k 15 240 "${PI_RUN[@]}" -p '只回答OK' >"$SMOKE_TMP" 2>&1
   SMOKE_RC=$?
   SMOKE_OUT="$(cat "$SMOKE_TMP")"
-  if [ "$SMOKE_RC" -eq 0 ] || { [ "$SMOKE_RC" -eq 124 ] && grep -q 'OK' <<<"$SMOKE_OUT"; }; then
-    [ "$SMOKE_RC" -eq 0 ] || WARN "线路门: pi -p 已应答 OK 但进程 240s 未退出（pi 收尾挂起，判活按应答计）"
-    OK "线路门: pi -p 冒烟应答（默认线 $WORKER_MODEL）"
-  else
-    FAIL "线路门: pi -p 冒烟 rc=$SMOKE_RC（默认线 $WORKER_MODEL；快速失败多为线路/包名问题，对照 docs/providers.md）。stderr 末行: $(printf '%s' "$SMOKE_OUT" | tail -1)"
-  fi
+  LINE_STATE="$(classify_line "$SMOKE_RC" "$SMOKE_OUT")"
+  case "$LINE_STATE" in
+    healthy)
+      [ "$SMOKE_RC" -eq 0 ] || WARN "线路门: pi -p 已应答 OK 但进程 240s 未退出（pi 收尾挂起，判活按应答计）"
+      ;;
+    capacity)
+      FAIL "线路门: 冒烟 state=capacity（默认线 $WORKER_MODEL；额度/速率/并发容量信号命中。恢复额度或经 CTO 改线后重跑，无放行口）。stderr 末行: $(printf '%s' "$SMOKE_OUT" | tail -1)"
+      ;;
+    *)
+      FAIL "线路门: 冒烟 state=unavailable（默认线 $WORKER_MODEL；rc=$SMOKE_RC，非容量类失败：连接/认证/模型不存在等，对照 docs/providers.md）。stderr 末行: $(printf '%s' "$SMOKE_OUT" | tail -1)"
+      ;;
+  esac
 fi
+
+# 维度二：默认线漂移（只读判定，永不写 settings、永不改写 state.worker_model）。
+# 基线 = <repo>/.mana/*/state.json 的 worker_model（存在且非空时）；当前 = settings 默认线。
+# fresh run 无 state → drift=none 只记录；不等 → drift FAIL（run 启动 fail-closed；
+# resume 路径记 blocker 上报由 SKILL §2「默认线漂移处理规则」承接）。
+DRIFT_STATE="none"; DRIFT_BASE=""
+for S in "$REPO_ROOT"/.mana/*/state.json; do
+  [ -f "$S" ] || continue
+  M="$(jq -r '.worker_model // empty' "$S" 2>/dev/null)" && [ -n "$M" ] || continue
+  DRIFT_BASE="${DRIFT_BASE:-$M}"
+  [ "$M" = "$WORKER_MODEL" ] || DRIFT_STATE="drift"
+done
+if [ "$DRIFT_STATE" = "drift" ]; then
+  FAIL "线路门: 默认线漂移 drift（baseline=$DRIFT_BASE 当前=$WORKER_MODEL；默认线在 run 期间不得切换：恢复基线后重跑预检，或上报 CTO 改线）"
+fi
+OK "线路门: state=$LINE_STATE drift=$DRIFT_STATE line=$WORKER_MODEL"
 LIST_TMP="$(mktemp)"
 timeout -k 10 120 "${PI_RUN[@]}" --list-models >"$LIST_TMP" 2>/dev/null || true
 LIST_OUT="$(cat "$LIST_TMP")"; rm -f "$LIST_TMP"
@@ -164,5 +205,5 @@ case "$ASK_TIMEOUT" in ''|*[!0-9]*) FAIL "配置门: omp config get ask.timeout 
 [ "$ASK_TIMEOUT" -gt 0 ] || FAIL "配置门: ask.timeout=$ASK_TIMEOUT 须 > 0（orchestrator 自决兜底依赖它）"
 OK "配置门: ask.timeout=$ASK_TIMEOUT"
 
-echo "PREFLIGHT PASS: worker_model=$WORKER_MODEL pi=$PI_VERSION"
+echo "PREFLIGHT PASS: worker_model=$WORKER_MODEL pi=$PI_VERSION 线路门: state=$LINE_STATE drift=$DRIFT_STATE line=$WORKER_MODEL"
 exit 0
