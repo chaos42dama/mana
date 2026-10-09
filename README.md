@@ -45,9 +45,9 @@ scripts/test_mana_selftest.py      # 自检入口回归测试（含两条真负�
 
 | 组件 | 说明 |
 | --- | --- |
-| [OMP（oh-my-pi）](https://github.com/mariozechner/pi-coding-agent) | orchestrator 宿主；需启用技能与项目 `.pi` 发现 |
+| [OMP（oh-my-pi）](https://github.com/can1357/oh-my-pi) | orchestrator 宿主；需启用技能与项目 `.pi` 发现 |
 | [herdr](https://herdr.dev) | 创建 worktree / workspace / pane，`herdr agent start --kind pi` |
-| Pi 编码 agent | lane 工人（`herdr agent start <name> --kind pi`） |
+| [Pi 编码 agent](https://github.com/badlogic/pi-mono) | lane 工人（`herdr agent start <name> --kind pi`）；npm 包 `@earendil-works/pi-coding-agent` |
 | 在一个 herdr pane 内运行 | 技能拒绝在 pane 外运行——没有可派发的目标 |
 | git 仓库 | 从主 checkout 运行，不要在链接 worktree 里发起 run |
 | `python3` | 守卫脚本与状态探测 |
@@ -129,9 +129,13 @@ bash scripts/mana-install.sh
 ### 开启自主模式（一次性授权）
 
 ```bash
-export MANA_AUTONOMOUS=1      # 建议写进 ~/.bashrc
+# 只在编排者 pane 生效（推荐）：
 MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
+# 或在 herdr pane split 时带 env：
+# herdr pane split --current --direction down --cwd <path> --env MANA_AUTONOMOUS=1 --no-focus
 ```
+
+> **不要**把 `export MANA_AUTONOMOUS=1` 写进 `~/.bashrc`——这会让所有非 mana 的 omp 会话也跳过 safe-guard 的危险命令确认。只在编排者 pane 设置。
 
 `MANA_AUTONOMOUS=1` 只跳过 bash 危险命令的确认弹窗（改为 warning 审计通知）；受保护路径（`.env`、`.git/`、`.ssh/`、`node_modules/`、`.omp/`）的确认与无 UI 时的硬阻断**不变**——密钥/认证红线不因自主模式放开。恢复逐条人工确认：`MANA_AUTONOMOUS=0 omp`。
 
@@ -173,6 +177,63 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 - pattern 以 `/` 结尾授权整棵子树；toml 授权必须同时给 `--allow-key` 键前缀（只授权文案键，不授权开关/门禁键）。
 - 密钥、认证、支付、非本 run 资源、main/DBA 重写**始终不在授权范围**，任何 grant 都不得覆盖。
+
+## 最新关键指令（main 最新版）
+
+### 四个互斥入口
+
+| 指令 | 类型 | 用途 |
+| --- | --- | --- |
+| `/mana <目标>` | intake | 模糊目标 → 可验收 Issue |
+| `/mana how <范围>` | context（只读） | 架构/数据流/文件归属；Complex 拆并行 explorer |
+| `/mana why <范围>` | context（只读） | 「为什么长成这样」；代码锚点先行，按证据类别派 lane |
+| `/mana teach <范围>` | context（只读） | 中文分层解释 |
+| `/mana recall <主题>` | context（只读） | 回看七天会话记忆/state/Issue/PR/分支 |
+| `/mana echo <问题 或 #N>` | context（只读） | 目标对齐自检 |
+| `/mana architect <范围>` | context（只读） | 多线路只读设计：2–3 条独立 sketch → 交叉评审 → 合成 |
+| `/mana prototype <决策问题>` | context（只读） | throwaway 多变体 + switcher，永不进主干 |
+| `/mana run #<issue>` | run | 授权后自主执行（默认自主 landing） |
+| `/mana run #<issue> --manual-landing` | run | 保留人工 merge 门 |
+| `/mana resume <run-id>` | resume | 崩溃/重启恢复 |
+
+### 关键脚本
+
+- `scripts/mana-run-lock.py` — run 单 owner 持锁入口（`fcntl.flock`，竞争失败返回 73）
+- `scripts/check-mana-grant-scope.py` — tier 守卫（`--self-test` / `--paths` 预测 / `--base+--allow-key` 复核）
+- `scripts/mana-preflight.sh` — run 预检（环境/pi 解析/线路/装机/配置/扩展自检）
+- `scripts/mana-heartbeat.sh` — 心跳兜底（可 crontab 定时唤醒 sweep）
+- `scripts/mana-install.sh` — 装机同步（仓库正本 → 用户级目录，消除 hand-synced list）
+- `scripts/mana-selftest.sh` — 全仓自检（`--quick` 为预检 d 门回归面）
+- `scripts/check-mana-issue.py` — intake Issue 骨架校验（`exit 0` 才可授权）
+- `node checks/all.check.mjs` — 契约回归面（全部 `checks/*.check.mjs` 无参数断言 + `--self-test` drill）
+
+### 关键环境变量
+
+- `MANA_AUTONOMOUS=1` — 编排者自主模式（safe-guard 跳过危险确认，改为 notify）
+- `MANA_WORKER=1` — 工人模式（提问 block、危险 bash 只告警、review 整门关闭）
+
+### 关键扩展（`extensions/pi/`）
+
+- `mana-worker.ts` — 工人提问工具 block + 自决指令回灌
+- `safe-guard.ts` — 危险 bash 只 notify；受保护路径硬 block
+- `precommit-review.ts` — 整门关闭（工人 pane 无人类，`/review` 会死锁）
+- `mana-worker-compact.ts` — 工人侧 compaction 接管（协议块+原始 brief+上次摘要写进压缩结果）
+- `mana-compact.ts` — 编排者侧 compaction 注入（§0 不变量+lane 快照+下一步）
+
+## 后续计划增强
+
+### P2（Issue #13 跟踪）
+
+- **how/why 并行 explorer 深化**：当前 how 的 Complex 路径已支持拆并行 lane，但 why 的 investigator lane 仍受 `max_parallel_lanes=2` 预算限制；评估提高默认预算或保持现状
+- **recall 会话记忆检索增强**：当前 recall 回看七天会话记忆，考虑接入 codebase-memory MCP 或增加 `.mana/*/state.json` 自动摘要索引
+- **arena 多模型竞技场**：若未来需要跨模型验证，可在 architect 阶段引入多线路 sketch 或在 verifier lane 中引入跨模型交叉评审
+- **technical-writing/unslop**：若 README 驱动开发成为刚需，可在 intake 阶段增加「README 模板校验」
+
+### 已评估不采纳（pstack 独有能力）
+
+- per-role 模型路由（与不传 `--model` 策略相反）
+- `/loop 1h` 取代 heartbeat（事件驱动更适合无人工 run）
+- performance mantras（无 perf lane，纯文案压缩收益低于噪音）
 
 ## 它不会做什么（不变量，非默认值）
 
@@ -227,11 +288,12 @@ python3 scripts/check-mana-grant-scope.py --self-test
 python3 scripts/test_mana_run_lock.py   # optional: 7 lock tests
 # pig host: pig-side herdr state extension rides the same install script (see "pig worker route (optional)" below)
 bash scripts/mana-install.sh
-# Autonomous mode (one-shot authorization)
-export MANA_AUTONOMOUS=1
+# Autonomous mode (one-shot authorization) — set only in the orchestrator pane
+MANA_AUTONOMOUS=1 omp
+# Do NOT add `export MANA_AUTONOMOUS=1` to ~/.bashrc: it would disable safe-guard for all OMP sessions.
 ```
 
-Requirements: OMP, [herdr](https://herdr.dev), a Pi coding agent with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`).
+Requirements: [OMP](https://github.com/can1357/oh-my-pi), [herdr](https://herdr.dev), a [Pi coding agent](https://github.com/badlogic/pi-mono) (npm `@earendil-works/pi-coding-agent`) with the worker extensions from `extensions/pi/` installed into `~/.pi/agent/extensions/`, run from inside a herdr pane in the main checkout of a git repo, `python3`, and any forge CLI (`gh`/`fj`/`glab`).
 
 ### pig worker route (optional)
 
