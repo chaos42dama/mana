@@ -185,7 +185,7 @@ Issue #8 验收原文：
 - **默认线漂移处理规则（line drift；本仓第四种漂移，与既有技能漂移 #27/配置漂移 §0.7/格式化漂移 #61 三类显式区分，对照 AGENTS.md 表）**：
   - **定义**：`~/.pi/agent/settings.json` 当前默认线 ≠ run 的 `state.worker_model`，或某 lane 会话 jsonl 首条 `model_change` 与该默认线不一致，或运行中出现**新增** `model_change`——三者任一即漂移。
   - **取证**：截获 settings 当前 `defaultProvider`/`defaultModel`、`state.worker_model`、jsonl `model_change` 原文与时间戳，四样一起留档。
-  - **处置**：不自行切线、不改写 `state.worker_model`（预检对两者均只读，`scripts/mana-preflight.sh` 线路门 run 启动即对漂移 FAIL，fail-closed）；记 `decision_log`（同步 `decisions.tsv`）+ `blocker`（含 baseline、当前值、settings 摘要、时间）并上报 CTO。
+  - **处置**：不自行切线、不改写 `state.worker_model`（预检对两者均只读，`scripts/mana-preflight.sh` 线路门 run 启动即对漂移 FAIL，fail-closed；漂移基线由环境变量 `MANA_RUN_ID` 指向本 run 的 `<repo>/.mana/$MANA_RUN_ID/state.json`，未设或无该 state 记 fresh run 不判漂移，**不得**把其它历史 run 的 worker_model 当基线）；记 `decision_log`（同步 `decisions.tsv`）+ `blocker`（含 baseline、当前值、settings 摘要、时间）并上报 CTO。
   - **容量/不可用 ≠ 漂移**：线路门三态冒烟的 `capacity`（额度/速率/并发）与 `unavailable`（连接/认证等）是**线路健康态**，漂移是**基线一致性态**；两维独立判定、独立文案，容量恢复不等于漂移消除，反之亦然。
 - 工人侧三处扩展（§0.7）由 `MANA_WORKER=1` 自动接管，brief **不再需要**逐条交代 `PI_SKIP_REVIEW=1` 之类的绕过技巧；brief 只写业务边界。
 - Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付洁净契约（`DONE:` 前工作区必须洁净，见下条）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。

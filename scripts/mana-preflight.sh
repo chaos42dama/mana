@@ -94,16 +94,20 @@ else
 fi
 
 # 维度二：默认线漂移（只读判定，永不写 settings、永不改写 state.worker_model）。
-# 基线 = <repo>/.mana/*/state.json 的 worker_model（存在且非空时）；当前 = settings 默认线。
-# fresh run 无 state → drift=none 只记录；不等 → drift FAIL（run 启动 fail-closed；
+# 基线 = 本 run 的 state.worker_model（MANA_RUN_ID 指针；与 SKILL §2「默认线漂移处理规则」
+# 同一语义：只与本 run 的 state 对照，不得扫全仓历史 .mana 把无关 run 的线当基线）；
+# 当前 = settings 默认线。MANA_RUN_ID 未设或不存在的 state 文件视作 fresh run → drift=none
+# 只记录；本 run state 存在且 worker_model 非空但不等 → drift FAIL（run 启动 fail-closed；
 # resume 路径记 blocker 上报由 SKILL §2「默认线漂移处理规则」承接）。
 DRIFT_STATE="none"; DRIFT_BASE=""
-for S in "$REPO_ROOT"/.mana/*/state.json; do
-  [ -f "$S" ] || continue
-  M="$(jq -r '.worker_model // empty' "$S" 2>/dev/null)" && [ -n "$M" ] || continue
-  DRIFT_BASE="${DRIFT_BASE:-$M}"
-  [ "$M" = "$WORKER_MODEL" ] || DRIFT_STATE="drift"
-done
+RUN_STATE="$REPO_ROOT/.mana/${MANA_RUN_ID:-__no_run__}/state.json"
+if [ -f "$RUN_STATE" ]; then
+  M="$(jq -r '.worker_model // empty' "$RUN_STATE" 2>/dev/null)" || M=""
+  if [ -n "$M" ]; then
+    DRIFT_BASE="$M"
+    [ "$M" = "$WORKER_MODEL" ] || DRIFT_STATE=drift
+  fi
+fi
 if [ "$DRIFT_STATE" = "drift" ]; then
   FAIL "线路门: 默认线漂移 drift（baseline=$DRIFT_BASE 当前=$WORKER_MODEL；默认线在 run 期间不得切换：恢复基线后重跑预检，或上报 CTO 改线）"
 fi

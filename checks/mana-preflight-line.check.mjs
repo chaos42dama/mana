@@ -10,8 +10,9 @@
 //   场景①②③跑在真 repo（capacity/unavailable 在 c 段早退、不触 d 段自检门；healthy 走全门，
 //   与 pig-gate 组3 同路径）；场景④跑在镜像 repo（drift FAIL 同样 c 段早退）——镜像让 drill
 //   不依赖真 repo 是否存在 .mana/（编排者工作区与 fresh worktree 都能跑）。
-//   场景①的假 settings 默认线对齐真 repo .mana 的首个 worker_model 基线（无则 anthropic/claude-x），
-//   保证 drift=none 断言环境无关。
+//   场景①的假 settings 默认线取 realBaseLine()（环境中性，不依赖 stale 基线是否仍匹配）。
+//   新 drift 语义（本 check 场景④/④b 已覆盖）：MANA_RUN_ID 未设/空 → 只与本 run state 对照，
+//   无对应 state = fresh run → drift=none；镜像 mirror run-drill 不再被全仓 glob 扫到。
 // --self-test：两条负例（对齐 #55/#65/#68 合成 drill 惯例）——
 //   ① 删容量信号集（CAPACITY_RE 换永不匹配词）→ capacity 场景漏判为 unavailable，主断言②失败；
 //   ② 删 drift 判定（比较行改恒 none）→ drift 场景不再产生漂移 FAIL，主断言④失败。
@@ -184,13 +185,14 @@ try {
   }
 
   // 4) drift：镜像 repo 造 state 基线 ≠ settings 默认线（冒烟 healthy）→ drift FAIL 列 baseline/当前值；
-  //    state.worker_model 字节不变
+  //    state.worker_model 字节不变。MANA_RUN_ID 指向镜像里的 run-drill（新预检语义：只与本 run state 对照）；
+  //    未设/MANA_RUN_ID 空值 → drift=none（fresh run 语义）。
   {
     const { home, bin } = setupEnv(FAKE_DEFAULT_LINE);
     const mirror = makeMirror({ stateLine: MIRROR_STATE_LINE });
     const statePath = join(mirror, ".mana/run-drill/state.json");
     const before = readFileSync(statePath);
-    const { rc, out } = runPreflight(bin, home, { cwd: mirror });
+    const { rc, out } = runPreflight(bin, home, { cwd: mirror, env: { MANA_RUN_ID: "run-drill" } });
     assert.notEqual(rc, 0, `场景④ 应 FAIL\n${out}`);
     assert.ok(
       out.includes(`默认线漂移 drift（baseline=${MIRROR_STATE_LINE} 当前=${FAKE_DEFAULT_LINE}`),
@@ -198,6 +200,16 @@ try {
     );
     assert.ok(before.equals(readFileSync(statePath)), "场景④ state.worker_model 必须字节不变（预检只读）");
     console.log("✓ 组4 drift → FAIL 列 baseline/当前值，state 只读未变");
+  }
+  // 4b) fresh（MANA_RUN_ID 空）→ drift=none：镜像 stale state 基线不被扫描；线路门已印机读行
+  //    （镜像无 extensions/，后续 d 门自检门在镜像必 FAIL，与线路门语义无关，故不 assert rc）
+  {
+    const { home, bin } = setupEnv(FAKE_DEFAULT_LINE);
+    const mirror = makeMirror({ stateLine: MIRROR_STATE_LINE });
+    const { rc, out } = runPreflight(bin, home, { cwd: mirror, env: { MANA_RUN_ID: "" } });
+    assert.ok(out.includes("ok: 线路门: state=healthy drift=none"), `场景④b fresh 应有 drift=none 机读行\n${out}`);
+    assert.ok(!out.includes("默认线漂移"), `场景④b fresh 不得触发漂移 FAIL 文案\n${out}`);
+    console.log("✓ 组4b fresh（MANA_RUN_ID 空）→ 不扫描镜像 stale state，writer drift=none（线路门绿）");
   }
   console.log("✓ preflight 线路门三态+drift 校验通过（4 组断言）");
 
@@ -219,7 +231,7 @@ try {
       const { home, bin } = setupEnv(FAKE_DEFAULT_LINE);
       const mirror = makeMirror({
         stateLine: MIRROR_STATE_LINE,
-        tamper: (s) => s.replace('[ "$M" = "$WORKER_MODEL" ] || DRIFT_STATE="drift"', "DRIFT_STATE=none"),
+        tamper: (s) => s.replace('[ "$M" = "$WORKER_MODEL" ] || DRIFT_STATE=drift', "DRIFT_STATE=none"),
       });
       const { out } = runPreflight(bin, home, { cwd: mirror });
       assert.ok(!out.includes("默认线漂移"), "负例② 删 drift 判定后不得再有漂移 FAIL 文案");
