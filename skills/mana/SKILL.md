@@ -1,6 +1,6 @@
 ---
 name: mana
-description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）。支持 intake、上下文重建（how/why/teach/recall/echo）、只读设计（architect）与只读原型（prototype），以及授权后的 Pi lane 自主执行、验收、PR、CI、merge、清理。Triggers: /mana, mana, 自主编排, Pi subagent, 自主 landing, /mana how, /mana why, /mana teach, /mana recall, /mana echo, /mana architect, /mana prototype。"
+description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）。支持 intake、上下文重建（how/why/teach/recall/echo）、只读设计（architect）与只读原型（prototype），以及授权后的 Pi lane 自主执行、验收、PR、CI、merge、清理。Triggers: /mana, mana, 自主编排, Pi subagent, 自主 landing, /mana how, /mana why, /mana teach, /mana recall, /mana echo, /mana architect, /mana prototype, /mana veri。"
 ---
 
 # /mana — OMP 自主编排
@@ -109,7 +109,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 本仓只提供**视角**；自动化的多线路设计审查已落地为 `/mana architect`（多线路 sketch + 交叉评审，见 context 第 6 条），**Issue #13** 保留为该设计半边其余条目的总跟踪。
 本仓已有该视角的实证：装机同步曾是典型 hand-synced list（`~/.omp/agent/skills/mana/SKILL.md` 曾落后正本 165 行）——`scripts/mana-install.sh` 即消除它、把用户级目录变成仓库正本安装产物的手段；`scripts/mana-preflight.sh` 装机门同样用 `cmp -s` 对正本而不是再维护一份文件清单。
 
-### context（不写业务代码；仅第 1/2/6/7 条 how/why/architect/prototype 可开只读 lane）
+### context（不写业务代码；仅第 1/2/6/7/8 条 how/why/architect/prototype/veri 可开只读 lane）
 
 `/mana how <范围>`、`/mana why <范围>`、`/mana teach <范围>`、`/mana recall <主题>`、`/mana echo <关键问题 或 #N>` 是高频上下文问答的最小等价入口，不另造多套项目技能。
 
@@ -134,7 +134,12 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - **交付**：呈现变体、证据（观测量/渲染结果）、取舍与**建议**，并明说原型是 throwaway、不是可交付代码；产物写 `.mana/<probe-id>/probe.md` + `variants/<n>/`；建议方向交回 `/mana architect`（要结构）或 `/mana run`（要实现）。
    与 architect 的分工：architect 决定**结构**、不写代码；prototype 决定**行为/交互/时序**、原型永不进主干、不得被当作实现复用；两者都不 landing，落地归 `/mana run`。
    硬边界：原型代码永不进主干（不 push、不建 PR、不 merge、不落业务目录）；scratch 目录可留（便于复看），但 prototype lane 用完按 §0.8 回收并双 `not_found` 验证；不写 `.mana/<run-id>/state.json`（`.mana/` 下只允许写 `.mana/<probe-id>/`）；不改 Issue；命令模板**不传 `--model`**（多样性来自 lane 独立性）。
-8. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条、prototype 第 7 条与 how/why 的只读取证 lane——第 1/2 条 Complex/并行取证路径——是仅有的四个显式例外）。
+8. **veri**：`/mana veri <目标>` 是只读验证技能生成入口，含 init/doctor/status 三口，brief 用 `skills/mana/references/veri-generator-prompt.md`，dispatch 同 §2（`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <veri-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`），feature 模板用 `skills/mana/references/veri-feature-map-template.md`：
+   - **init**：三段流程——① 只读 explorer lane **五步访谈**（**Surface / Run / Drive / Observe / Isolate**，只问代码库不问用户，依据仓内 README/Makefile/package scripts）；② 生成 `verify-<app>/` 技能——SKILL.md **六节**：**Launch / Doctor / Drive / Evidence / Cleanup / Helpers**，无占位符；features/README.md 索引 + 3–5 个 feature 文件，每个四 H2 = `Sub-features` / `How to get to it (user POV)` / `Driving it with <harness>` / `Gotchas`，接 front-matter 账本四键 `last_verified_sha` / `last_verified_at` / `verdict`（`live|unit|type-only|blocked|failed|verified-unreachable`）/ `prerequisites`；③ orchestrator 亲自端到端实跑 **launch → doctor → drive 1 个 feature → 取证 → cleanup → 确认证据在 cleanup 后仍在**。**落盘写死**：工人在目标仓 `.pi/skills/verify-<app>/` 生成（工作区内）；landing 由 orchestrator 安装 canonical `~/.pi/agent/skills/verify-<app>/`，并以软链 `~/.omp/agent/skills/verify-<app>` 共用。**未被执行过的生成技只算 draft，不算交付**。veri 生态**永不改产品代码**。
+   - **doctor**：只读零副作用——对已生成 verify-<app> 跑六节 Doctor 校验 + 索引卫生（features/README.md 与 sibling 文件对账）。
+   - **status**：只读清单——verify-* 技能、feature 数、每个 feature 的 `last_verified_sha` / `last_verified_at` / `verdict`，并给出相对 `origin/main`（及超天数）的陈旧度。
+   - 通用约束：lane 数 ≤ `max_parallel_lanes`；dispatch **不传 `--model`**；explore lane 只读（受 safe-guard `~/.pi/**` 用户级硬拦约束）；`/mana veri` 的 PR 上限 1。maintain 结果 `clean|changed|blocked`——`changed` 时转 intake、经 `/mana run` 出 ≤1 PR（maintain 细节不在本条展开）。
+9. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条、prototype 第 7 条、veri 第 8 条与 how/why 的只读取证 lane——第 1/2 条 Complex/并行取证路径——是仅有的五个显式例外）。
 
 ### run（已批准 Issue）
 

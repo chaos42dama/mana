@@ -149,6 +149,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 | `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；how/why 支持并行只读取证 lane（how：Complex 拆切面 ≤ `max_parallel_lanes`；why：代码锚点先行 + 每证据类别一条 investigator + 四档证据分级）；结论默认不落盘，仅在回复里交付，明确要求才写 `.mana/<context-id>/`；`/mana echo` 另做目标对齐自检 |
 | `/mana architect <范围>` | **context**：只读多线路设计入口——2–3 条独立 sketch lane 交叉评审合成 design package，落盘 `.mana/<design-id>/`；不写实现代码、不 push/merge，实现归 `/mana run` |
 | `/mana prototype <决策问题>` | **context**：只读原型入口——throwaway 多变体原型 + 一个 switcher + 观测量回答一个具体决策，落盘 `.mana/<probe-id>/`；原型永不进主干，不承诺自动截图（UI 类只到能渲染 + 人工看） |
+| `/mana veri <目标>` | **context**：只读验证技能生成入口——init（五步访谈 → 生成 verify-<app> 技能 → 端到端实跑）/doctor/status 三口，永不改产品代码；落盘/维护细节见技能 veri 条目 |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
 
 > `/mana run` 有前置：目标仓须逐项满足技能的「仓库前置条件」节（`scripts/mana-run-lock.py`、tier 守卫、`.git/info/exclude`、仓内红线定义、`tier_grants` 批准、工具链）。缺项只走 context/intake。
@@ -313,6 +314,7 @@ pig is an optional worker route: where pig is installed, lanes may run on pig wo
 - `/mana how|why|teach|recall|echo <scope>` — **context**: read-only Q&A; how/why support parallel read-only evidence lanes (how: Complex splits into non-overlapping facets up to `max_parallel_lanes`; why: code anchors first, one investigator per evidence category, four-tier evidence grading); conclusions are delivered in the reply by default and only written to `.mana/<context-id>/` when explicitly requested; `/mana echo` additionally restates the current task goal so drift shows up immediately.
 - `/mana architect <scope>` — **context**: read-only multi-lane design entry — 2–3 independent sketch lanes cross-reviewed into one design package under `.mana/<design-id>/`; no implementation code, no push/merge (implementation belongs to `/mana run`).
 - `/mana prototype <decision question>` — **context**: read-only prototype entry — throwaway multi-variant prototypes behind one switcher, decided by observation under `.mana/<probe-id>/`; prototypes never reach mainline, no promised auto-screenshots (UI gets to render + human eyeball only).
+- `/mana veri <target>` — **context**: read-only verification-skill generation entry — init (five-question interview → generate verify-<app> skill → end-to-end live run) / doctor / status; never touches product code.
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.
 
 `/mana run` has prerequisites: the target repo must satisfy the skill's repo-prerequisites checklist — `scripts/mana-run-lock.py`, the tier guard, `.git/info/exclude`, in-repo red-line definitions, an approved `tier_grants`, and the toolchain. Missing any of them means context/intake only.
