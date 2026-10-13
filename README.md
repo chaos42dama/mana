@@ -193,9 +193,25 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 | `/mana echo <问题 或 #N>` | context（只读） | 目标对齐自检 |
 | `/mana architect <范围>` | context（只读） | 多线路只读设计：2–3 条独立 sketch → 交叉评审 → 合成 |
 | `/mana prototype <决策问题>` | context（只读） | throwaway 多变体 + switcher，永不进主干 |
+| `/mana veri <目标>` | context（只读） | 验证技能与功能地图四口：init / doctor / status / maintain（详见下节） |
 | `/mana run #<issue>` | run | 授权后自主执行（默认自主 landing） |
 | `/mana run #<issue> --manual-landing` | run | 保留人工 merge 门 |
 | `/mana resume <run-id>` | resume | 崩溃/重启恢复 |
+
+### `/mana veri`：验证技能与功能地图（核心原理与日常使用）
+
+**核心原理**：mana 里每次 run 的验收都绑 lane 的 `head_sha`（§0「DONE 是 claim 不是 verdict」），但「这个仓的应用怎么启动、怎么驱动、怎么取证」的知识过去只活在每个 agent 的会话记忆里。`/mana veri` 把它固化成**项目级事实源**：`verify-<app>/SKILL.md`（Launch / Doctor / Drive / Evidence / Cleanup / Helpers 六节，全部写死真实命令与就绪信号，无占位符）+ 功能地图 `features/*`（每个功能四 H2 + front-matter 账本 `last_verified_sha`/`verdict`/`prerequisites`——证据绑 SHA，新 commit 即触发陈旧）。前置：`veri init` 交付前 must 端到端实跑（launch→doctor→drive 1 个 feature→取证→cleanup→证据仍在），未执行过的生成技能只是 draft。
+
+**四口日常使用**：
+
+| 子命令 | 什么时候用 | 产出 |
+| --- | --- | --- |
+| `veri init [<app>]` | 给新仓生成验证技能（一次） | `verify-<app>/` + 前 3–5 个 features（生成后 orchestrator 亲自端到端实跑一遍） |
+| `veri doctor [<app>]` | 任意时刻只读零副作用；**重大功能变化后必跑** | 六节 Doctor + 功能地图索引卫生（README vs sibling 对账），不改文件 |
+| `veri status` | 想知道既往验收是否还有效 | verify-* 清单：feature 数、各账本 SHA、落后 head/origin/main 的陈旧度 |
+| `veri maintain [<app>]` | 有重大变更后或人工节奏到期；`--source-only` 快查不驱动 | Pass 0–6 对账 → `clean`（无 PR）/ `changed`（≤1 个 PR，只含已证实的修正）/ `blocked`（逐项写明）；`--source-only` 结果只标 `partial`，不得当作 clean |
+
+**边界（对 pstack 原型的收束）**：maintain 的编辑范围只限 `verify-<app>/` 自身目录，**永不改产品代码**——行为与地图不符时要么是 doc drift（修地图）、要么是 product gap（写进报告上报），不用文档现状照盖；source wave 只读 lanes 走 `MANA_WORKER=1` 派发、不传 `--model`；live pass 由 orchestrator 独占驾驶。生成物 canonical = `~/.pi/agent/skills/verify-<app>/`，OMP 侧 `~/.omp/agent/skills/verify-<app>` 软链共用（#78 实测裁决：`~/.pi/skills/` 不被 pi 发现）；工人 lane 在目标仓 worktree `.pi/skills/` 生成，用户级安装归 landing 段（safe-guard 用户级硬拦，已在 #79/#80 两 run 实证）。
 
 ### 关键脚本
 
@@ -316,6 +332,8 @@ pig is an optional worker route: where pig is installed, lanes may run on pig wo
 - `/mana prototype <decision question>` — **context**: read-only prototype entry — throwaway multi-variant prototypes behind one switcher, decided by observation under `.mana/<probe-id>/`; prototypes never reach mainline, no promised auto-screenshots (UI gets to render + human eyeball only).
 - `/mana veri <target>` — **context**: read-only verification-skill generation entry — init (five-question interview → generate verify-<app> skill → end-to-end live run) / doctor / status; never touches product code; maintain routine reconciliation (results `clean|changed|blocked`, `--source-only` is partial only).
 - `/mana run #<issue>` — **run**: the only start phrase; autonomous landing is the default, `--manual-landing` keeps a human merge gate.
+
+**`/mana veri` in practice** — the core idea: every mana run binds its acceptance to a lane's `head_sha` ("DONE is a claim, not a verdict"), but "how this app is launched, driven, and evidenced" used to live only in each agent's session memory. `/mana veri` turns it into a project-local source of truth: `verify-<app>/SKILL.md` (six sections Launch/Doctor/Drive/Evidence/Cleanup/Helpers, real commands and ready signals, no placeholders) plus a feature map whose ledger (front-matter `last_verified_sha`/`verdict`/`prerequisites`) binds evidence to the SHA — any new commit marks the map stale. Generated skills are live-run end to end before delivery (an unexecuted skill is a draft). Daily use: `init` once per repo; `doctor` at any time (mandatory after major functional changes, read-only); `status` for freshness; `maintain` on a human cadence — outcomes `clean` / `changed` (≤1 PR of proven corrections) / `blocked`, and `--source-only` is `partial`, never treated as clean. Maintain edits only the `verify-<app>/` directory and never product code (doc drift fixes the map, product gaps are reported, not papered over); source-wave lanes are read-only and never carry `--model`; live passes are driven solely by the orchestrator. Canonical install: `~/.pi/agent/skills/verify-<app>/` symlinked into OMP at `~/.omp/agent/skills/verify-<app>`; workers generate in the target repo's worktree and user-level installation stays with the landing phase.
 
 `/mana run` has prerequisites: the target repo must satisfy the skill's repo-prerequisites checklist — `scripts/mana-run-lock.py`, the tier guard, `.git/info/exclude`, in-repo red-line definitions, an approved `tier_grants`, and the toolchain. Missing any of them means context/intake only.
 
