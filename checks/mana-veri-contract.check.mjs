@@ -7,11 +7,11 @@
 //         Evidence/Cleanup/Helpers）、四 H2、账本四键、端到端实跑要求、命令模板不含 --model、
 //         lane ≤ max_parallel_lanes、maintain 三结果、永不改产品代码。
 //         环境变量 MANA_VERI_CONTRACT_SKILL 可覆盖待检 SKILL.md 路径（live drill 用）。
-// --self-test：合成 drill——合成完整版最小片段必须通过；两条负例：
-//         ① 删掉「cleanup 后证据仍在」→ 检查失败；② veri 命令模板插入 --model → 检查失败。
+// --self-test：合成 drill——合成完整版最小片段必须通过；三条负例：
+//         ① 删掉「cleanup 后证据仍在」→ 检查失败；② veri 命令模板插入 --model → 检查失败；
+//         ③ 删 maintain「永不改产品代码」→ 检查失败。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 // 契约分组：required = 必须逐字在 SKILL.md 中的关键原文；negative = 附加负向/结构断言
 const GROUPS = [
@@ -77,6 +77,38 @@ const GROUPS = [
     required: ["`clean|changed|blocked`"],
   },
   {
+    name: "maintain · 口与 Pass 链",
+    required: [
+      "**maintain**——功能地图例行对账",
+      "skills/mana/references/veri-maintain-prompt.md",
+      "0 定位目标",
+      "1 索引卫生",
+      "2 source wave",
+      "3 reconcile",
+      "4 live pass",
+      "5 triage",
+      "6 出 PR 或停",
+    ],
+  },
+  {
+    name: "maintain · 三结果与 partial 口径",
+    required: [
+      "`clean`（无 verify-<app> 或无需改）",
+      "`changed`（只装已证实的修正，≤1 个 PR）",
+      "`blocked`（逐项写明挡点）",
+      "--source-only",
+      "**partial**，不得当作 `clean`",
+    ],
+  },
+  {
+    name: "maintain · 边界",
+    required: [
+      "编辑范围只限 verify-<app> 自身目录",
+      "orchestrator 独占驾驶",
+      "product gap 记录上报、不进 PR",
+    ],
+  },
+  {
     name: "生态边界",
     required: ["**永不改产品代码**"],
   },
@@ -130,6 +162,7 @@ function syntheticFull() {
     "### context（不写业务代码）",
     "8. **veri**：`/mana veri <目标>` 是只读验证技能生成入口，含 init/doctor/status 三口，brief 用 `skills/mana/references/veri-generator-prompt.md`：",
     "   - **init**：只读 explorer lane **五步访谈**（**Surface / Run / Drive / Observe / Isolate**，只问代码库不问用户）；生成 SKILL.md 六节：**Launch / Doctor / Drive / Evidence / Cleanup / Helpers**，无占位符；features/README.md 索引 + 3–5 个 feature 文件，四 H2 = `Sub-features` / `How to get to it (user POV)` / `Driving it with <harness>` / `Gotchas`，接账本四键 `last_verified_sha` / `last_verified_at` / `verdict` / `prerequisites`；orchestrator 亲自端到端实跑 launch → doctor → drive 1 个 feature → 取证 → cleanup → 确认证据在 cleanup 后仍在。**落盘写死**：工人在目标仓 `.pi/skills/verify-<app>/` 生成（工作区内）；landing 由 orchestrator 安装 canonical `~/.pi/agent/skills/verify-<app>/`，并以软链 `~/.omp/agent/skills/verify-<app>` 共用。**未被执行过的生成技只算 draft，不算交付**。veri 生态**永不改产品代码**。",
+    "   - **maintain**——功能地图例行对账（source wave brief 模板用 `skills/mana/references/veri-maintain-prompt.md`）：三结果 **`clean`（无 verify-<app> 或无需改）/ `changed`（只装已证实的修正，≤1 个 PR）/ `blocked`（逐项写明挡点）**。Pass 0–6：**0 定位目标**（无 verify-<app> 就停、指回 init）→ **1 索引卫生**（features/README.md 与 sibling 文件对账，修缺/多/重复/死条目）→ **2 source wave**（每 feature 一条只读 lane，峰值 ≤ `max_parallel_lanes`，不传 `--model`；孩子只读、不驱动、不改文件）→ **3 reconcile**（每 feature 有摘要即齐；除非有具体源码路径不得判缺失）→ **4 live pass**（orchestrator 独占驾驶：每 feature 至少一次；三不变量——doctor 不变量、证据不被 cleanup 吃掉、残留必须清理；`verified-unreachable` 必须写明具体前置条件与尝试路径）→ **5 triage**（doc drift / harness gap / product gap——product gap 记录上报、不进 PR）→ **6 出 PR 或停**（`changed` 时转 intake、经 `/mana run` 出 ≤1 PR）。`--source-only` 只跑 source wave，结果标 **partial**，不得当作 `clean`。编辑范围只限 verify-<app> 自身目录，**永不改产品代码**（行为不对 = doc drift 修地图或 product gap 上报，不纸盖）。",
     "   - 通用约束：lane 数 ≤ `max_parallel_lanes`；dispatch **不传 `--model`**；explore lane 只读（受 safe-guard `~/.pi/**` 用户级硬拦约束）；`/mana veri` 的 PR 上限 1。maintain 结果 `clean|changed|blocked`。dispatch 同 §2：`herdr agent start <veri-name> --kind pi --pane <pane-id>`。",
     "9. context 是只读入口。",
   ].join("\n");
@@ -162,6 +195,17 @@ function selfTest() {
       ),
     /--model/,
     `${label} 负例②未触发：命令模板插入 --model 应失败`,
+  );
+
+  // 负例③：删 maintain「永不改产品代码」→ 失败
+  assert.throws(
+    () =>
+      runAssertions(
+        syntheticFull().replace(/\*\*永不改产品代码\*\*/g, ""),
+        `${label} · 负例③`,
+      ),
+    /永不改产品代码|生态边界/,
+    `${label} 负例③未触发：删 maintain「永不改产品代码」应失败`,
   );
 }
 
