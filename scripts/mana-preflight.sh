@@ -9,7 +9,55 @@ FAIL() { echo "PREFLIGHT FAIL: $1" >&2; exit 1; }
 WARN() { echo "PREFLIGHT WARN: $1" >&2; }
 OK()   { echo "ok: $1"; }
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# MANA_SRC 指向含 extensions/ 的正本仓；自动探测 canonical git common-dir 后退回全局 skill。
+if [ -n "${MANA_SRC:-}" ]; then
+  SOURCE_ROOT="$(cd "$MANA_SRC" 2>/dev/null && pwd)" || FAIL "源解析门: MANA_SRC 不存在：$MANA_SRC"
+else
+  SOURCE_ROOT=""
+  _repo_root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$_repo_root" ]; then
+    _git_common="$(git -C "$_repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    for _candidate in "$(dirname "$_git_common")" "$_repo_root"; do
+      if [ -f "$_candidate/extensions/pi/mana-worker.ts" ]; then
+        SOURCE_ROOT="$_candidate"
+        break
+      fi
+    done
+  fi
+  [ -n "$SOURCE_ROOT" ] || SOURCE_ROOT="$SKILL_DIR"
+fi
+HAS_EXTENSION_SOURCE=1
+SOURCE_FILES=(
+  extensions/pi/mana-worker.ts
+  extensions/pi/mana-worker-compact.ts
+  extensions/pi/precommit-review.ts
+  extensions/pi/safe-guard.ts
+  extensions/mana-compact.ts
+  extensions/safe-guard.ts
+  extensions/pig/herdr-agent-state.ts
+)
+for _source_file in "${SOURCE_FILES[@]}"; do
+  if [ ! -f "$SOURCE_ROOT/$_source_file" ]; then
+    if [ -n "${MANA_SRC:-}" ]; then
+      FAIL "源解析门: $SOURCE_ROOT 缺 $_source_file（MANA_SRC 必须指向完整 mana 正本仓）"
+    fi
+    HAS_EXTENSION_SOURCE=0
+    break
+  fi
+done
+if [ "$HAS_EXTENSION_SOURCE" -eq 0 ]; then
+  WARN "装机门: 未找到扩展正本源（$SOURCE_ROOT），跳过源码 cmp；将检查已安装扩展并运行其自检"
+fi
+
+# run-state 始终属于运行中的目标仓，不随全局脚本安装位置变化。
+if [ -n "${MANA_REPO:-}" ]; then
+  REPO_ROOT="$(cd "$MANA_REPO" 2>/dev/null && pwd)" || FAIL "仓库解析门: MANA_REPO 不存在：$MANA_REPO"
+else
+  REPO_ROOT="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
 
 # ── a. 环境门 ────────────────────────────────────────────────────────────────
 [ "${MANA_AUTONOMOUS:-}" = "1" ] || FAIL "环境门: MANA_AUTONOMOUS 未设为 1（否则 safe-guard 会在 run 中途弹确认）"
@@ -120,17 +168,31 @@ if ! grep -qF -- "$PROVIDER" <<<"$LIST_OUT" && ! grep -qF -- "$MODEL" <<<"$LIST_
   WARN "线路门: --list-models 目录未见默认线 $WORKER_MODEL（目录不全/分列属已知假阴性，仅告警）"
 fi
 
-# ── d. 自检门（全部从 repo 根实跑） ─────────────────────────────────────────
+# ── d. 自检门（正本可用时跑全仓自检；安装态至少实跑扩展单项） ────────────────
 # 末条带 --force-contracts 强制契约参数：顶层预检必真跑 contracts；嵌套重入（pig-gate check
 # 反向调回预检）由自检入口自身的环境标记在自检侧切断；阴性注入上下文除外（见循环内注释）。
+PI_EXT="$HOME/.pi/agent/extensions"
+OMP_EXT="$HOME/.omp/agent/extensions"
+if [ "$HAS_EXTENSION_SOURCE" -eq 1 ]; then
+  _pi_source="$SOURCE_ROOT/extensions/pi"
+  _omp_source="$SOURCE_ROOT/extensions"
+else
+  _pi_source="$PI_EXT"
+  _omp_source="$OMP_EXT"
+fi
 SELFTESTS=(
-  "PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts"
-  "PI_SAFE_GUARD_SELFTEST=1 bun extensions/pi/safe-guard.ts"
-  "PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts"
-  "PI_MANA_WORKER_COMPACT_SELFTEST=1 bun extensions/pi/mana-worker-compact.ts"
-  "MANA_COMPACT_SELFTEST=1 bun extensions/mana-compact.ts"
-  "bash scripts/mana-selftest.sh --quick --force-contracts"
+  "PI_MANA_WORKER_SELFTEST=1 bun '$_pi_source/mana-worker.ts'"
+  "PI_SAFE_GUARD_SELFTEST=1 bun '$_pi_source/safe-guard.ts'"
+  "PI_PRECOMMIT_SELFTEST=1 bun '$_pi_source/precommit-review.ts'"
+  "PI_MANA_WORKER_COMPACT_SELFTEST=1 bun '$_pi_source/mana-worker-compact.ts'"
+  "MANA_COMPACT_SELFTEST=1 bun '$_omp_source/mana-compact.ts'"
 )
+if [ -f "$SOURCE_ROOT/checks/all.check.mjs" ] && [ -f "$SOURCE_ROOT/scripts/mana-selftest.sh" ]; then
+  SELFTESTS+=("bash '$SOURCE_ROOT/scripts/mana-selftest.sh' --quick --force-contracts")
+else
+  SELFTESTS+=("python3 '$SCRIPT_DIR/check-mana-grant-scope.py' --self-test")
+  WARN "自检门: 未找到 mana 正本 checks/，跳过全仓 --quick 自检；全局 tier 守卫与已安装扩展自检仍执行"
+fi
 for t in "${SELFTESTS[@]}"; do
   # -u MANA_WORKER：precommit-review 自检的 decideCommit 默认参读 env，工人 pane 里跑会自证失败；
   # 预检验证的是扩展逻辑本身，剥掉 pane 的工人态。
@@ -138,7 +200,11 @@ for t in "${SELFTESTS[@]}"; do
   # 场景预检若重入 contracts 会经 all.check 再入 pig-gate check，其 setupEnv 会 rmSync 本场景
   # 正在用的 .tmp-pig-gate-check scratch，外层装机门必炸；正常预检不设标记，contracts 照跑。
   case "$t" in
-  *mana-selftest*) [ -n "${MANA_PREFLIGHT_SKIP_SMOKE:-}" ] && t="MANA_SELFTEST_ACTIVE=1 $t" ;;
+  *mana-selftest*)
+    if [ ! -f "$SOURCE_ROOT/checks/all.check.mjs" ] || [ -n "${MANA_PREFLIGHT_SKIP_SMOKE:-}" ]; then
+      t="MANA_SELFTEST_ACTIVE=1 $t"
+    fi
+    ;;
   esac
   (cd "$REPO_ROOT" && env -u MANA_WORKER bash -c "$t") >/dev/null 2>&1 || FAIL "自检门: $t 非 0（在 $REPO_ROOT 实跑失败）"
   OK "自检门: $t"
@@ -156,21 +222,23 @@ PI_EXT="$HOME/.pi/agent/extensions"
 OMP_EXT="$HOME/.omp/agent/extensions"
 PI_INSTALLED=()
 for f in mana-worker.ts safe-guard.ts precommit-review.ts mana-worker-compact.ts; do
-  [ -f "$PI_EXT/$f" ] || FAIL "装机门: 缺 $PI_EXT/$f（cp $REPO_ROOT/extensions/pi/*.ts $PI_EXT/）"
+  [ -f "$PI_EXT/$f" ] || FAIL "装机门: 缺 $PI_EXT/$f（先运行 bash '$SCRIPT_DIR/mana-install.sh'）"
   PI_INSTALLED+=("$PI_EXT/$f")
 done
 OMP_INSTALLED=()
 for f in mana-compact.ts safe-guard.ts; do
-  [ -f "$OMP_EXT/$f" ] || FAIL "装机门: 缺 $OMP_EXT/$f（cp $REPO_ROOT/extensions/$f $OMP_EXT/）"
+  [ -f "$OMP_EXT/$f" ] || FAIL "装机门: 缺 $OMP_EXT/$f（先运行 bash '$SCRIPT_DIR/mana-install.sh'）"
   OMP_INSTALLED+=("$OMP_EXT/$f")
 done
 OK "装机门: 6 个扩展文件存在（$PI_EXT, $OMP_EXT）"
-for f in mana-worker.ts mana-worker-compact.ts precommit-review.ts; do
-  cmp -s "$REPO_ROOT/extensions/pi/$f" "$PI_EXT/$f" || WARN "装机门: 漂移 $PI_EXT/$f 与 repo 版不同（功能以自检实跑为准）"
-done
-cmp -s "$REPO_ROOT/extensions/mana-compact.ts" "$OMP_EXT/mana-compact.ts" || WARN "装机门: 漂移 $OMP_EXT/mana-compact.ts 与 repo 版不同（功能以自检实跑为准）"
-cmp -s "$REPO_ROOT/extensions/pi/safe-guard.ts" "$PI_EXT/safe-guard.ts" || WARN "装机门: 漂移 $PI_EXT/safe-guard.ts 与 repo 版不同（功能以自检实跑为准）"
-cmp -s "$REPO_ROOT/extensions/safe-guard.ts" "$OMP_EXT/safe-guard.ts" || WARN "装机门: 漂移 $OMP_EXT/safe-guard.ts 与 repo 版不同（功能以自检实跑为准）"
+if [ "$HAS_EXTENSION_SOURCE" -eq 1 ]; then
+  for f in mana-worker.ts mana-worker-compact.ts precommit-review.ts; do
+    cmp -s "$SOURCE_ROOT/extensions/pi/$f" "$PI_EXT/$f" || WARN "装机门: 漂移 $PI_EXT/$f 与 repo 版不同（功能以自检实跑为准）"
+  done
+  cmp -s "$SOURCE_ROOT/extensions/mana-compact.ts" "$OMP_EXT/mana-compact.ts" || WARN "装机门: 漂移 $OMP_EXT/mana-compact.ts 与 repo 版不同（功能以自检实跑为准）"
+  cmp -s "$SOURCE_ROOT/extensions/pi/safe-guard.ts" "$PI_EXT/safe-guard.ts" || WARN "装机门: 漂移 $PI_EXT/safe-guard.ts 与 repo 版不同（功能以自检实跑为准）"
+  cmp -s "$SOURCE_ROOT/extensions/safe-guard.ts" "$OMP_EXT/safe-guard.ts" || WARN "装机门: 漂移 $OMP_EXT/safe-guard.ts 与 repo 版不同（功能以自检实跑为准）"
+fi
 
 # ── f. pig 门（pig 为可选工人线路：未装=SKIP 不拦；装了=扩展在位+自检绿，缺一即 FAIL） ──
 # 为什么「未装 pig」不拦：pig 线路是可选工人线路，没装 pig 的机器 /mana run 照常只用 pi 工人跑完；
@@ -178,8 +246,7 @@ cmp -s "$REPO_ROOT/extensions/safe-guard.ts" "$OMP_EXT/safe-guard.ts" || WARN "�
 # 扩展路径沿装机门的用户级惯例，并尊重 pig 官方 PIG_HOME 覆盖（也供阴性测试注入三态）。
 if command -v pig >/dev/null 2>&1; then
   PIG_EXT="${PIG_HOME:-$HOME/.pig}/agent/extensions/herdr-agent-state.ts"
-  PIG_EXT_DIR="$(dirname "$PIG_EXT")"
-  [ -f "$PIG_EXT" ] || FAIL "pig 门: 缺 $PIG_EXT（cp $REPO_ROOT/extensions/pig/herdr-agent-state.ts $PIG_EXT_DIR/）"
+  [ -f "$PIG_EXT" ] || FAIL "pig 门: 缺 $PIG_EXT（先运行 bash '$SCRIPT_DIR/mana-install.sh'）"
   if command -v node >/dev/null 2>&1; then
     # 自检走扩展入口 reportArgs()，断言两条：
     # ① --source=pig:herdr-state 与 --agent-session-path 在位：herdr 按 source 去重/归属集成，按 session path 关联会话文件，缺任一则上报对不上账；

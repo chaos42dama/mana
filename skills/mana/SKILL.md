@@ -11,6 +11,8 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 ## §0 不变量（违反即停）
 
+全局 skill 目录：`~/.omp/agent/skills/mana/`；全局脚本目录：`~/.omp/agent/skills/mana/scripts/`。`scripts/*` 随 SKILL.md 与 references 由 `bash scripts/mana-install.sh` 一并装机，仓内命令引用全局脚本绝对路径。
+
 1. **state 是唯一事实源**。状态存 `<repo>/.mana/<run-id>/state.json`（`.git/info/exclude` 排除 `.mana/`）。每次监督 sweep 先重读，再原子重写。会话记忆不可信。
 2. **DONE 是 claim 不是 verdict**。工人报完成后，orchestrator 必须亲自重跑该 lane 的验收命令，通过才信。
 3. **代码 lane 必须 worktree 隔离并由 Pi 执行**。用 `herdr worktree create` 创建本 run 工作区，在其专属 pane 执行 `herdr agent start <name> --kind pi`（pi 线路专用；pig 为可选工人线路，启动见 §2 pig 分支）；不得用 OMP `task`/`workpool` 充当代码工人。只读 lane 同样优先 Pi pane；只有一次性无会话调查才可用 OMP `scout`。
@@ -23,7 +25,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - 无 `tier_grants` 覆盖的 tier B 需求在 §1.4 预检就停，不派发；禁止“跑完再问”。
    - pattern 以 `/` 结尾表示授权整棵子树。toml 授权必须同时给 `--allow-key` 键前缀，否则只授权了路径、没授权内容。
    - 共享只读资源（如目标仓的 `res/`）、密钥、认证、支付、非本 run 的资源、main/DBA 强推或删除，始终不在授权范围，任何 `tier_grants` 都不得覆盖。
-   - 默认守卫 `scripts/check-mana-grant-scope.py`（本仓库提供，建议复制到目标仓）：`--self-test` 自检；`--paths a,b` 预测模式（只比路径）；`--base origin/main --allow-key ui.txt.` 复核模式（路径 + 键范围）。
+   - 默认守卫 `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py`（由正本安装器分发，无需复制到目标仓）：`--self-test` 自检；`--paths a,b` 预测模式（只比路径）；`--base origin/main --allow-key ui.txt.` 复核模式（路径 + 键范围）。
    - **常备授权块**：CTO 批准并合入 main 的长周期授权块可直接写进 SKILL.md 或 Issue；run 启动时并入 `state.authorization.tier_grants`，命中即按本条判 tier A，不再逐 Issue 询问。
 7. **工人永不因交互 UI 停机**。工人 lane 必须带 `MANA_WORKER=1` 启动（§2 dispatch 的 `--env`）。该模式下三处宿主扩展（本仓库 `extensions/pi/`）同时转入工人语义，各自带内联自检：
    - `mana-worker.ts`：交互式提问类工具（`ask_question`/`question`/`ask`…）在 `tool_call` 阶段直接 block，并把「按 `recommended`/(Recommended) 项自决、把结论写进交付『决策』段」的指令回灌给模型；会话启动 notify 一次，orchestrator 可由 pane 输出确认 env 已生效。自检 `PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts`。
@@ -31,7 +33,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - `precommit-review.ts`：整门关闭，不武装、不拦截、不排队 `/review`。原因：pi-review 的 `/review` 在非空会话里 `ctx.ui.select("Start review in:", ["Empty branch","Current session"])`，收尾还要人工 `/end-review`，工人 pane 没有人类 → 死锁；历史 run 里多个 lane 曾各自临场改用 `PI_SKIP_REVIEW=1` 绕过。审查职责改由 orchestrator 复验与 PR 评审承担。自检 `PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts`。
    - `mana-worker-compact.ts`（工人侧 compaction 接管）：`MANA_WORKER=1` 下接管 `session_before_compact`，把工人协议块 + 原始 brief + 上次摘要整段写进压缩结果，压缩后工人不丢交付契约。自检 `PI_MANA_WORKER_COMPACT_SELFTEST=1 bun extensions/pi/mana-worker-compact.ts`；**run 预检必须一并跑**。
    - `mana-compact.ts`（编排者侧 compaction 注入，OMP `extensions/`）：`session.compacting` 时把 §0 不变量 + 当前 run 的 lane 快照 + 下一步注入压缩摘要，压缩后 orchestrator 不丢 state 对账能力；无 `.mana/` 时不干预。自检 `MANA_COMPACT_SELFTEST=1 bun extensions/mana-compact.ts`；**run 预检必须一并跑**。
-   - 以上扩展自检与 run 预检（环境/pi 解析/线路/装机/配置）已脚本化为 `scripts/mana-preflight.sh`，run 启动先实跑一遍，全过才派发。
+   - 以上扩展自检与 run 预检（环境/pi 解析/线路/装机/配置）已脚本化为 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh`，run 启动先实跑一遍，全过才派发。
    - 因此 lane 内的 VCS 变更、提交和本地 branch 清理应直接执行；不得把 Herdr `blocked` 当常规控制流。**run 中若仍出现确认 UI，视为配置漂移**：orchestrator 先 `get/read` 查因（首要检查 pane 内 `printenv MANA_WORKER` 是否为 `1`），记录原文并在 state 记 `blocker`；只有当屏幕命令、目标和影响完全匹配 state 中已批准 lane 的本地 worktree 操作时才 `herdr agent send-keys <name> enter`。远端删除、push/merge、共享只读资源、密钥、认证、支付、main/DBA 重写一律 `blocked`。不得盲发 `enter`；宿主强制阻止的确认不是可绕过的授权门，必须记录其原文并上报。
 8. **Pi worker 必须回收**。lane 验收后，orchestrator 关闭它创建的专属 pane：`herdr pane close <pane-id>`；随后 `herdr agent get <name>` 和 `herdr pane get <pane-id>` 必须均为 `not_found`。未回收不得报告 run 完成。
 9. **orchestrator 自身同样不得停在选择上**。自主 run 内：不调用 `ask`；需要决策时按同一条规则自决（有 `recommended` 取之，否则取自评最优首项），并把结论写进 `state.decision_log`；宿主兜底是 `~/.omp/agent/config.yml` 的 `ask: {timeout: 30}`（超时自动选中 recommended，无则首项；plan mode 下不生效）。只有 tier 判定/授权边界/§0.6 红线才上报 CTO，且一个 run 最多汇总问一次。
@@ -43,10 +45,10 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 - 启动下列持久 shell，让整个 run 的后续命令都发往这一个 shell（主仓与 run 路径替换为实际绝对路径，OWNER 使用可读会话标识）：
 
   ```sh
-  python3 <repo>/scripts/mana-run-lock.py <repo>/.mana/<run-id> <session-id> -- /bin/bash --noprofile --norc
+  python3 ~/.omp/agent/skills/mana/scripts/mana-run-lock.py <repo>/.mana/<run-id> <session-id> -- /bin/bash --noprofile --norc
   ```
 
-  （`<repo>` = 当前主仓绝对路径；该脚本是仓库前置，见「仓库前置条件」。）
+  （`<repo>` = 当前主仓绝对路径；锁脚本由全局安装器分发，见「全局装机前置与仓库前置条件」。）
 
   后续必须发送到这一个 shell；state 的读取、RMW 和原子替换，以及所有上述 mutation 命令均在此执行。不得另开 `bash`、直接用 `write/edit` 工具或另一个会话绕过。启动失败不得继续发送 mutation；保持该 shell 活到 run 全部操作完成。
 - 固定锁文件是 `RUN_DIR/orchestrator.lock`；`fcntl.flock(LOCK_EX|LOCK_NB)` 竞争失败返回 **73**，不会执行子命令。第二会话只能只读或等待显式接管：原 owner 停止 mutation、退出执行会话，确认后代结束，再由新 owner 成功取锁并重读 state。**严禁删除、替换 lock 文件来解决冲突**，否则 inode 分裂会产生双 owner。
@@ -55,12 +57,12 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 - `flock` 仅提供合作进程互斥，不是同 UID 安全沙箱，不能阻止直接工具写入。锁文件中的 owner/PID/run_dir 仅用于诊断，不是权限依据，也不是状态库。
 - 历史 state/Issue 的修正由 Main 负责：保留原始 `observed_claim`，追加 `correction` 和 `source` 证据；不得把旧 claim 静默改成已验证事实。本入口只实现单 owner 锁，不修历史数据。
 
-### 仓库前置条件（新仓库要用 /mana run 前逐项核对）
+### 全局装机前置与仓库前置条件
 
-全局技能 ≠ 全局可 run。每个仓库独立满足以下前置，缺项只走 context/intake：
+全局技能 ≠ 全局可 run。先由正本仓运行 `bash scripts/mana-install.sh`；两个必需脚本须已装入 `~/.omp/agent/skills/mana/scripts/`。再逐仓核对其余前置，缺项只走 context/intake：
 
-1. `scripts/mana-run-lock.py`：run 单 owner 持锁入口（含 `test_mana_run_lock.py`；发布树自带，`cp` 到目标仓 `scripts/` 即装）。
-2. `scripts/check-mana-grant-scope.py`：tier 守卫（本仓库自带，`--self-test` 先跑通）。
+1. `~/.omp/agent/skills/mana/scripts/mana-run-lock.py`：run 单 owner 持锁入口；`python3 ~/.omp/agent/skills/mana/scripts/test_mana_run_lock.py` 自检。
+2. `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py`：tier 守卫；`python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --self-test` 须通过。
 3. `.git/info/exclude` 含 `.mana/`；`.gitignore` 未跟踪 run 产物。
 4. 该仓 AGENTS.md 明确：受保护分支、只读上游区、`tier_grants` 红线的仓内定义。
 5. CTO 针对该仓的 `tier_grants` 批准（常备块按仓分节维护）。
@@ -79,7 +81,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
       "ops/config/copy.*.toml"
     ],
     "max_tier": "A",
-    "guard": "python3 scripts/check-mana-grant-scope.py --base origin/main --allow-path apps/web/ --allow-path 'ops/config/copy.*.toml' --allow-key ui.txt.",
+    "guard": "python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --base origin/main --allow-path apps/web/ --allow-path 'ops/config/copy.*.toml' --allow-key ui.txt.",
     "approved_at": "2026-09-16"
   }
 ]
@@ -92,8 +94,8 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 1. `/mana <目标>` 先像 `ask` 一样追问**目标、非目标、验收、风险路径、需决策项**；不派发、不写业务代码。
 2. 把结论写成/更新 Issue（forge CLI：`gh`/`fj`/`glab` 任一，本文以 `gh` 示例）：每个 lane 有目标、文件边界、可执行 acceptance、tier、合并后清理；并**给出建议的 `tier_grants` 块**（pattern 列表 + `--allow-key` + guard 命令），供 CTO 一次批准。列出唯一启动口令：`/mana run #<issue>`（默认即自主 landing；仅当要保留人工 merge 门才加 `--manual-landing`）。
-   Issue 定稿后、进入 run 之前，先跑骨架校验：`python3 scripts/check-mana-issue.py --body <file>`（或 `--number <N>` 经 forge CLI 取正文）——`exit 0` 才可授权；非 0 则回 intake 补齐缺项，不得带着缺项进 run。
-3. CTO 确认 Issue 和启动口令后，才进入 run。OMP goal runtime 只是便利层（暴露 goal tool 时才 arm），**不是权威续航，也不取代 intake 的需求澄清**：intake 阶段不得把 goal runtime 当作需求澄清或续航的依赖——`state.json` + `scripts/mana-heartbeat.sh` 心跳才是唯一权威续航（与 §1 run 第 2 步同口径）。
+   Issue 定稿后、进入 run 之前，先跑骨架校验：`python3 ~/.omp/agent/skills/mana/scripts/check-mana-issue.py --body <file>`（或 `--number <N>` 经 forge CLI 取正文）——`exit 0` 才可授权；非 0 则回 intake 补齐缺项，不得带着缺项进 run。
+3. CTO 确认 Issue 和启动口令后，才进入 run。OMP goal runtime 只是便利层（暴露 goal tool 时才 arm），**不是权威续航，也不取代 intake 的需求澄清**：intake 阶段不得把 goal runtime 当作需求澄清或续航的依赖——`state.json` + `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` 心跳才是唯一权威续航（与 §1 run 第 2 步同口径）。
 
 #### 设计审查四红旗（intake 阶段筛设计）
 
@@ -107,25 +109,25 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 | **hand-synced list** | 手工同步的清单（同一份内容多处各维护一份，靠人记得同步） | 看到「复制到另一处」「两处要保持一致」「记得同步」时：改成单一事实源 + 脚本/生成器同步，别靠人记 |
 
 本仓只提供**视角**；自动化的多线路设计审查已落地为 `/mana architect`（多线路 sketch + 交叉评审，见 context 第 6 条），**Issue #13** 保留为该设计半边其余条目的总跟踪。
-本仓已有该视角的实证：装机同步曾是典型 hand-synced list（`~/.omp/agent/skills/mana/SKILL.md` 曾落后正本 165 行）——`scripts/mana-install.sh` 即消除它、把用户级目录变成仓库正本安装产物的手段；`scripts/mana-preflight.sh` 装机门同样用 `cmp -s` 对正本而不是再维护一份文件清单。
+本仓已有该视角的实证：装机同步曾是典型 hand-synced list（`~/.omp/agent/skills/mana/SKILL.md` 曾落后正本 165 行）——`scripts/mana-install.sh` 即消除它、把用户级目录变成仓库正本安装产物的手段；`~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同样用 `cmp -s` 对正本而不是再维护一份文件清单。
 
 ### context（不写业务代码；仅第 1/2/6/7/8 条 how/why/architect/prototype/veri 可开只读 lane）
 
 `/mana how <范围>`、`/mana why <范围>`、`/mana teach <范围>`、`/mana recall <主题>`、`/mana echo <关键问题 或 #N>` 是高频上下文问答的最小等价入口，不另造多套项目技能。
 
-1. **how**：`/mana how <范围>` 以代码、运行命令、LSP 或 codebase-memory 为证据，说明当前架构、运行数据流、文件归属与边界；不把推测写成事实。**复杂度分流**：范围含糊先说出自己的理解再查（用户可纠正）。**Simple**（单模块、小工具、窄问题如「函数 X 怎么工作」）→ **不派 lane**，一条只读 explainer 单程走完；**Complex**（跨多文件/多服务、cross-cutting、全局架构概览）→ 拆成 `min(2, max_parallel_lanes)` 个**互不重叠的切面**（同时 running 的 explorer ≤`max_parallel_lanes`，默认 2；预算为 1 时单条 explorer 走完 Complex），每条一个**只读 Pi explorer lane**（dispatch 同 §2，**不传 `--model`**），brief 用 `skills/mana/references/how-explorer-prompt.md`。explorer **只取证不写散文**：找入口 → 追调用链 → 追数据流与归属边界；不要猜名字，要读代码；朝外产出是证据集合，面向人的解释留给合成环节。**合成**：把各 explorer 的发现合成一份 senior onboarding 级心智模型——数据怎么流、归属与边界在哪、哪些是推测；**推测必须显式标成推测**。lane 用完按 §0.8 回收并双 `not_found` 验证；不 push/merge/改 Issue；结论默认只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。
-2. **why**：`/mana why <范围>` 用**谨慎的调查者**姿态回答「这段代码为什么长成这样」。代码不携带动机——动机在 commit、PR、Issue、文档、对话里，不完整、有偏、常常缺失；装作读到了，就只会产出误导人的自信猜测。**代码锚点先行**：派 investigator 前必须拿到文件路径与行区间、关键符号、初始 commit 列表、从 merge commit 里抽出的 PR 号（`git blame -L <start>,<end> <file>`、`git log --follow -p -- <file>`、`git log --oneline -20 -- <file>`、`git log -1 --format=%B <commit>` 抽 `(#1234)`、`gh pr view <n> --json title,body,author,createdAt,mergedAt,labels,closingIssuesReferences,comments,reviews`）；**没有锚点不派 lane**。**并行取证**：按**本机实际可用**的证据类别派 lane（source control = `git` + `gh`；issue tracker = `gh issue` / `gh pr`；long-form docs = 仓库内文档与 session 记忆；`codebase-memory` MCP 可用则单列一类）。**每个类别一条 lane，各管一个来源，不要让一条 lane cover 多个来源**，brief 用 `skills/mana/references/why-investigator-prompt.md`；同时 running 的 investigator ≤ `max_parallel_lanes`（state 顶层预算，默认 2，与 code lane 同一预算），类别多于预算就回收一条再派一条；类别为空/查无证据要**写进缺口清单**（Document the null），不得跳过搜索。**合成**：由一条只读 synthesizer lane（回收完 investigator 后启动），brief 用 `skills/mana/references/why-epistemics.md`，按其四档输出——`direct`（有人**白纸黑字**写过为什么，如 PR 正文写「修的是用户有 >1000 条时无法分页」）、`supported`（有指向性证据但没直说）、`inference`（推断，必须写出推断链）、`unknown`（查不到，明确说查不到，含查证范围）；**每条结论要么带出处、要么带标签**，把 inference 写成 direct 属违规。lane 同样按 §0.8 回收并双 `not_found` 验证；**不传 `--model`**、不 push/merge/改 Issue；结论默认只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。
+1. **how**：`/mana how <范围>` 以代码、运行命令、LSP 或 codebase-memory 为证据，说明当前架构、运行数据流、文件归属与边界；不把推测写成事实。**复杂度分流**：范围含糊先说出自己的理解再查（用户可纠正）。**Simple**（单模块、小工具、窄问题如「函数 X 怎么工作」）→ **不派 lane**，一条只读 explainer 单程走完；**Complex**（跨多文件/多服务、cross-cutting、全局架构概览）→ 拆成 `min(2, max_parallel_lanes)` 个**互不重叠的切面**（同时 running 的 explorer ≤`max_parallel_lanes`，默认 2；预算为 1 时单条 explorer 走完 Complex），每条一个**只读 Pi explorer lane**（dispatch 同 §2，**不传 `--model`**），brief 用 `~/.omp/agent/skills/mana/references/how-explorer-prompt.md`。explorer **只取证不写散文**：找入口 → 追调用链 → 追数据流与归属边界；不要猜名字，要读代码；朝外产出是证据集合，面向人的解释留给合成环节。**合成**：把各 explorer 的发现合成一份 senior onboarding 级心智模型——数据怎么流、归属与边界在哪、哪些是推测；**推测必须显式标成推测**。lane 用完按 §0.8 回收并双 `not_found` 验证；不 push/merge/改 Issue；结论默认只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。
+2. **why**：`/mana why <范围>` 用**谨慎的调查者**姿态回答「这段代码为什么长成这样」。代码不携带动机——动机在 commit、PR、Issue、文档、对话里，不完整、有偏、常常缺失；装作读到了，就只会产出误导人的自信猜测。**代码锚点先行**：派 investigator 前必须拿到文件路径与行区间、关键符号、初始 commit 列表、从 merge commit 里抽出的 PR 号（`git blame -L <start>,<end> <file>`、`git log --follow -p -- <file>`、`git log --oneline -20 -- <file>`、`git log -1 --format=%B <commit>` 抽 `(#1234)`、`gh pr view <n> --json title,body,author,createdAt,mergedAt,labels,closingIssuesReferences,comments,reviews`）；**没有锚点不派 lane**。**并行取证**：按**本机实际可用**的证据类别派 lane（source control = `git` + `gh`；issue tracker = `gh issue` / `gh pr`；long-form docs = 仓库内文档与 session 记忆；`codebase-memory` MCP 可用则单列一类）。**每个类别一条 lane，各管一个来源，不要让一条 lane cover 多个来源**，brief 用 `~/.omp/agent/skills/mana/references/why-investigator-prompt.md`；同时 running 的 investigator ≤ `max_parallel_lanes`（state 顶层预算，默认 2，与 code lane 同一预算），类别多于预算就回收一条再派一条；类别为空/查无证据要**写进缺口清单**（Document the null），不得跳过搜索。**合成**：由一条只读 synthesizer lane（回收完 investigator 后启动），brief 用 `~/.omp/agent/skills/mana/references/why-epistemics.md`，按其四档输出——`direct`（有人**白纸黑字**写过为什么，如 PR 正文写「修的是用户有 >1000 条时无法分页」）、`supported`（有指向性证据但没直说）、`inference`（推断，必须写出推断链）、`unknown`（查不到，明确说查不到，含查证范围）；**每条结论要么带出处、要么带标签**，把 inference 写成 direct 属违规。lane 同样按 §0.8 回收并双 `not_found` 验证；**不传 `--model`**、不 push/merge/改 Issue；结论默认只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。
 3. **teach**：复用 how 和 why 的证据，以中文分层解释“它是什么、怎样运作、为什么这样取舍”；涉及三项以上参与者时用递进图，不改代码。
 4. **recall**：默认回看本仓最近七天的会话记忆、`.mana/*/state.json`、Issue/PR、分支和 worktree 现状，产出至多五条的当前状态、未决问题和唯一下一步；用户给出完整状态时不重复挖掘。
 5. **echo**：目标对齐自检——检验的是**对当前任务目标的理解**是否偏移，不是项目状态（那是 recall）。只读：不写代码、不派 lane、不改 Issue、不碰 state。步骤：① 用自己的话重述「我认为你的目标是什么、我试图解决的问题是什么」；② 给 `#N` 时先读该 Issue 全文与已有评论，输出「Issue 原文目标 vs 我当前理解」的 diff 并标出偏移；③ 不清楚处**立即反问并停在这里，不落笔**；④ 末尾列出需要 CTO 拍板的分歧点清单。发现偏移只报告、不自行纠正，要改转 intake。回复优先评论到对应 Issue，只给结论 + 关键证据 + 方案。
 6. **architect**：`/mana architect <范围>` 是只读设计入口——开多条独立只读 Pi lane 出结构互异的整体 sketch，交叉评审后合成一份 design package。五阶段：
    - **A 接地**：以 `/mana how` 的证据为准；「命名了一个文件」不算接地，必须给出追踪过的模型（数据流、归属、边界）。设计若改动既有归属或分层，再用 `/mana why` 取 rationale 并当作约束。纯 greenfield 且无周边系统要集成时可跳过 A，但要在产物里写明跳过理由。
-   - **B 独立 sketch**：开 **2–3 条只读 Pi lane**（每条独立 pane + 独立上下文 + `--env MANA_WORKER=1`）：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <arch-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（**不传 `--model`**，§2 禁令同样适用——多样性来自 lane 独立性，不来自线路差异）。start 返回后按 §2 的启动后校验确认 agent 名已注册（只读 lane 同样可能被半成功 pane 静默占住）。brief 用 `skills/mana/references/architect-runner-prompt.md`（references 随 `scripts/mana-install.sh` 一起分发到用户级目录）。要求各候选**结构上互不相同**的整体形状——不是同一形状里的点修。
+   - **B 独立 sketch**：开 **2–3 条只读 Pi lane**（每条独立 pane + 独立上下文 + `--env MANA_WORKER=1`）：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <arch-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（**不传 `--model`**，§2 禁令同样适用——多样性来自 lane 独立性，不来自线路差异）。start 返回后按 §2 的启动后校验确认 agent 名已注册（只读 lane 同样可能被半成功 pane 静默占住）。brief 用 `~/.omp/agent/skills/mana/references/architect-runner-prompt.md`（references 随 `bash scripts/mana-install.sh` 一起装入 `~/.omp/agent/skills/mana/references/`）。要求各候选**结构上互不相同**的整体形状——不是同一形状里的点修。
    - **C 交叉评审与合成**：用**另一条**只读 lane 按 intake「设计审查四红旗」逐一筛选每个候选，命中红旗即否决；再按**接口深度**比较可行候选——公开面越小、藏起的复杂度越多越好。合成一份 design package，`Synthesis decision` 必须记录：选了哪个基底、吸收了什么、否决了什么及原因；单候选直接通过不合规。
-   - **D 交付**：design package 写 `.mana/<design-id>/design.md`（按 `skills/mana/references/architect-rationale-template.md` 八段），各候选原样留 `.mana/<design-id>/candidates/<n>.md`；对 CTO/用户的回复只给结论 + 关键证据 + 待决问题，不贴整份长文。
+   - **D 交付**：design package 写 `.mana/<design-id>/design.md`（按 `~/.omp/agent/skills/mana/references/architect-rationale-template.md` 八段），各候选原样留 `.mana/<design-id>/candidates/<n>.md`；对 CTO/用户的回复只给结论 + 关键证据 + 待决问题，不贴整份长文。
    - **E 偏离即信号**：进入实现后，偏离 sketch 要 surfaced 而不是默默吸收；同形偏离反复出现即回炉重设计。但本入口不写实现代码，实现归 `/mana run`。
    只读边界：不改业务代码、不 push、不 merge、不改 Issue、不写 `.mana/<run-id>/state.json`（`.mana/` 下只允许写 `.mana/<design-id>/`）；sketch 与评审 lane 用完按 §0.8 回收并双 `not_found` 验证；重复执行同一 `<范围>` 新建 `<design-id>`、不覆盖既有产物（确要覆盖须显式说明）。
-7. **prototype**：`/mana prototype <决策问题>` 是只读原型入口——开独立只读 Pi lane（dispatch 同 §2：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <probe-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`，**不传 `--model`**；brief 用 `skills/mana/references/prototype-switcher-prompt.md`）。start 返回后按 §2 的启动后校验确认 agent 名已注册（只读 lane 同样不得被半成功 pane 静默占住）。用最轻的栈做 throwaway 多变体原型，用观测量回答一个具体决策问题，原型永不进主干。五步（每步有产出与停止条件）：
+7. **prototype**：`/mana prototype <决策问题>` 是只读原型入口——开独立只读 Pi lane（dispatch 同 §2：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <probe-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`，**不传 `--model`**；brief 用 `~/.omp/agent/skills/mana/references/prototype-switcher-prompt.md`）。start 返回后按 §2 的启动后校验确认 agent 名已注册（只读 lane 同样不得被半成功 pane 静默占住）。用最轻的栈做 throwaway 多变体原型，用观测量回答一个具体决策问题，原型永不进主干。五步（每步有产出与停止条件）：
    - **定决策**：先写清这个原型为哪个决定服务（布局 / 交互 / 密度，或行为·时序·方案取舍），决策一句话写进产物；**没有决策就没有原型**——说不出要决定什么就停，要结构转 `/mana architect`，要实现转 `/mana run`。
    - **取材**（仅当设计空间开放）：找先例、列 moodboard 供 CTO/用户挑方向，产出为方向清单；方向已定则跳过并在产物里写明「方向已定，跳过取材」。
    - **throwaway 构建**：隔离 scratch 目录（默认 `.mana/<probe-id>/`，可按 CTO 决策用仓库外自指定 scratch 路径但必须记进产物），用最轻的栈（vanilla HTML/CSS/JS 或最小脚本），不引生产框架、不写测试、不做抽象；显式声明这是 throwaway；停止条件为 scratch 路径与构建说明已记进产物。
@@ -134,18 +136,18 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - **交付**：呈现变体、证据（观测量/渲染结果）、取舍与**建议**，并明说原型是 throwaway、不是可交付代码；产物写 `.mana/<probe-id>/probe.md` + `variants/<n>/`；建议方向交回 `/mana architect`（要结构）或 `/mana run`（要实现）。
    与 architect 的分工：architect 决定**结构**、不写代码；prototype 决定**行为/交互/时序**、原型永不进主干、不得被当作实现复用；两者都不 landing，落地归 `/mana run`。
    硬边界：原型代码永不进主干（不 push、不建 PR、不 merge、不落业务目录）；scratch 目录可留（便于复看），但 prototype lane 用完按 §0.8 回收并双 `not_found` 验证；不写 `.mana/<run-id>/state.json`（`.mana/` 下只允许写 `.mana/<probe-id>/`）；不改 Issue；命令模板**不传 `--model`**（多样性来自 lane 独立性）。
-8. **veri**：`/mana veri <目标>` 是只读验证技能生成入口，含 init/doctor/status 三口；`maintain` 口见下（取自 pstack /maintain-verification-skill，改写引用，MIT Copyright 2026 Lauren Tan），brief 用 `skills/mana/references/veri-generator-prompt.md`，dispatch 同 §2（`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <veri-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`），feature 模板用 `skills/mana/references/veri-feature-map-template.md`：
+8. **veri**：`/mana veri <目标>` 是只读验证技能生成入口，含 init/doctor/status 三口；`maintain` 口见下（取自 pstack /maintain-verification-skill，改写引用，MIT Copyright 2026 Lauren Tan），brief 用 `~/.omp/agent/skills/mana/references/veri-generator-prompt.md`，dispatch 同 §2（`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <veri-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`），feature 模板用 `~/.omp/agent/skills/mana/references/veri-feature-map-template.md`：
    - **init**：三段流程——① 只读 explorer lane **五步访谈**（**Surface / Run / Drive / Observe / Isolate**，只问代码库不问用户，依据仓内 README/Makefile/package scripts）；② 生成 `verify-<app>/` 技能——SKILL.md **六节**：**Launch / Doctor / Drive / Evidence / Cleanup / Helpers**，无占位符；features/README.md 索引 + 3–5 个 feature 文件，每个四 H2 = `Sub-features` / `How to get to it (user POV)` / `Driving it with <harness>` / `Gotchas`，接 front-matter 账本四键 `last_verified_sha` / `last_verified_at` / `verdict`（`live|unit|type-only|blocked|failed|verified-unreachable`）/ `prerequisites`；③ orchestrator 亲自端到端实跑 **launch → doctor → drive 1 个 feature → 取证 → cleanup → 确认证据在 cleanup 后仍在**。**落盘写死**：工人在目标仓 `.pi/skills/verify-<app>/` 生成（工作区内）；landing 由 orchestrator 安装 canonical `~/.pi/agent/skills/verify-<app>/`，并以软链 `~/.omp/agent/skills/verify-<app>` 共用。**未被执行过的生成技只算 draft，不算交付**。veri 生态**永不改产品代码**。
    - **doctor**：只读零副作用——对已生成 verify-<app> 跑六节 Doctor 校验 + 索引卫生（features/README.md 与 sibling 文件对账）。
    - **status**：只读清单——verify-* 技能、feature 数、每个 feature 的 `last_verified_sha` / `last_verified_at` / `verdict`，并给出相对 `origin/main`（及超天数）的陈旧度。
-   - **maintain**——功能地图例行对账（source wave brief 模板用 `skills/mana/references/veri-maintain-prompt.md`）：三结果 **`clean|changed|blocked`**——`clean`（无 verify-<app> 或无需改）/ `changed`（只装已证实的修正，≤1 个 PR）/ `blocked`（逐项写明挡点）。Pass 0–6：**0 定位目标**（无 verify-<app> 就停、指回 init）→ **1 索引卫生**（features/README.md 与 sibling 文件对账，修缺/多/重复/死条目）→ **2 source wave**（每 feature 一条只读 lane，峰值 ≤ `max_parallel_lanes`，不传 `--model`；孩子只读、不驱动、不改文件）→ **3 reconcile**（每 feature 有摘要即齐；除非有具体源码路径不得判缺失）→ **4 live pass**（orchestrator 独占驾驶：每 feature 至少一次；三不变量——doctor 不变量、证据不被 cleanup 吃掉、残留必须清理；`verified-unreachable` 必须写明具体前置条件与尝试路径）→ **5 triage**（doc drift / harness gap / product gap——product gap 记录上报、不进 PR）→ **6 出 PR 或停**（`changed` 时转 intake、经 `/mana run` 出 ≤1 PR）。`--source-only` 只跑 source wave，结果标 **partial**，不得当作 `clean`。编辑范围只限 verify-<app> 自身目录，**永不改产品代码**（行为不对 = doc drift 修地图或 product gap 上报，不纸盖）。
+   - **maintain**——功能地图例行对账（source wave brief 模板用 `~/.omp/agent/skills/mana/references/veri-maintain-prompt.md`）：三结果 **`clean|changed|blocked`**——`clean`（无 verify-<app> 或无需改）/ `changed`（只装已证实的修正，≤1 个 PR）/ `blocked`（逐项写明挡点）。Pass 0–6：**0 定位目标**（无 verify-<app> 就停、指回 init）→ **1 索引卫生**（features/README.md 与 sibling 文件对账，修缺/多/重复/死条目）→ **2 source wave**（每 feature 一条只读 lane，峰值 ≤ `max_parallel_lanes`，不传 `--model`；孩子只读、不驱动、不改文件）→ **3 reconcile**（每 feature 有摘要即齐；除非有具体源码路径不得判缺失）→ **4 live pass**（orchestrator 独占驾驶：每 feature 至少一次；三不变量——doctor 不变量、证据不被 cleanup 吃掉、残留必须清理；`verified-unreachable` 必须写明具体前置条件与尝试路径）→ **5 triage**（doc drift / harness gap / product gap——product gap 记录上报、不进 PR）→ **6 出 PR 或停**（`changed` 时转 intake、经 `/mana run` 出 ≤1 PR）。`--source-only` 只跑 source wave，结果标 **partial**，不得当作 `clean`。编辑范围只限 verify-<app> 自身目录，**永不改产品代码**（行为不对 = doc drift 修地图或 product gap 上报，不纸盖）。
    - 通用约束：lane 数 ≤ `max_parallel_lanes`；dispatch **不传 `--model`**；explore lane 只读（受 safe-guard `~/.pi/**` 用户级硬拦约束）；`/mana veri` 的 PR 上限 1。
 9. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条、prototype 第 7 条、veri 第 8 条与 how/why 的只读取证 lane——第 1/2 条 Complex/并行取证路径——是仅有的五个显式例外）。
 
 ### run（已批准 Issue）
 
 1. 先按「run 单 owner 执行入口」启动持锁 shell，再执行以下写入与 mutation。读 Issue 全文与已有评论（forge CLI），确认已批准的子任务分解与授权范围：`autonomous_landing` 缺省为 `true`，仅 `--manual-landing` 时为 `false`，并写入 state；缺任一项 → 只回 intake，不 dispatch。
-2. 把可检查的终态写入 state 的 `goal` 字段；当前 OMP runtime 暴露 `/goal` 或 goal tool 时同步 arm。**goal runtime 只是便利层**：`state.json` + `scripts/mana-heartbeat.sh` 心跳才是唯一权威续航机制，goal runtime 丢失、被压缩失效、或当前 runtime 未暴露 goal 工具，都**不构成 run 中断**，也不得作为停止理由。终态未满足不得因 worker 结束而停机。
+2. 把可检查的终态写入 state 的 `goal` 字段；当前 OMP runtime 暴露 `/goal` 或 goal tool 时同步 arm。**goal runtime 只是便利层**：`state.json` + `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` 心跳才是唯一权威续航机制，goal runtime 丢失、被压缩失效、或当前 runtime 未暴露 goal 工具，都**不构成 run 中断**，也不得作为停止理由。终态未满足不得因 worker 结束而停机。
 3. 写 lanes 表进 state.json：`{run_id, base_ref, authorization{...,tier_grants}, goal, max_parallel_lanes, lanes: [{id, kind: readonly|code, target, acceptance: [命令或可观察断言], head_sha, verdict, tier, tier_grant, guard_output, branch, workspace_id, pane_id, agent_name, attempt: <整数，从 1 起；1＝首轮，2＝唯一一次重派>, superseded_by_agent: <被当前 agent 取代的旧 agent 名，首轮为 null，用于重派对账>, model: <provider>/<id>（启动后回读取证）, max_wall_minutes, max_rounds, retry_mode, status: planned|running|verifying|verified|reclaimed|landed|blocked|failed}]}`。`tier_grant` 记命中的 grant 索引，`guard_output` 记守卫命令的实际输出摘要。
    - **验证账本**：`head_sha` 记验收通过当时该 lane worktree 的 `git rev-parse HEAD`；`verdict` ∈ {`live`, `unit`, `type-only`, `blocked`, `failed`}，每个值由哪类 acceptance 支撑：`live`＝真实服务/端到端断言实跑通过，`unit`＝单元或静态断言实跑通过，`type-only`＝只做了类型检查或文本断言（未实跑业务路径），`blocked`＝lane 被 blocker 挡住未完成验收，`failed`＝acceptance 实跑失败。结论只在其 `head_sha` 上有效。
    - **失效规则**：任何产生新 commit 的动作（重派、打回修复、改代码后重验）之后，旧 `head_sha` 上的 `verified`/`landed` 结论一律作废，必须在新 `head_sha` 上重跑 acceptance 才可恢复；恢复时以新 `head_sha` + 新 `verdict` 覆盖账本。
@@ -164,7 +166,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - **墙钟超时不等于失败**：超过 `max_wall_minutes` 时不得直接判 `blocked`/`failed`，必须先 `herdr agent get`/`read` 取证，再按 §0.7 裁决（prompt 未投递 / 配置漂移 / 真 `BLOCKED:`）；裁决结果写 `decision_log`，取证仍无定论才置 `blocked`。
    - **并发上限**：state 顶层 `max_parallel_lanes`（默认 2）只约束**同时处于 `running` 的 code lane 数**，readonly lane 不计入；达到上限时新 lane 保持 `planned`，直到有 code lane 离开 `running` 再派发。
 
-4. 预检（已脚本化为 `scripts/mana-preflight.sh`，任一项失败非 0 即停，run 启动先跑它；下述清单即脚本覆盖的语义）：`HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出 pi 当前的默认线路写入 `state.worker_model`（**仅记录与对照，不改写、不传派发参数**）：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。pig 为可选工人线路：预检 f 段（pig 门）仅在 pig 二进制在位时校验 pig 侧 herdr 状态扩展（`~/.pig/agent/extensions/herdr-agent-state.ts`）的装机与 `reportArgs` 自检，未装 pig 则 SKIP 不拦。契约回归面以 `node checks/all.check.mjs` 为准：一条命令跑完全部 `checks/*.check.mjs` 的无参数断言与 `--self-test` drill 两种模式（`--only <子串>` 单点排查）；不得以手写 `for f in checks/*.check.mjs` 枚举当回归面依据——漏列即漏验。预检 d 门的契约回归面由 `scripts/mana-selftest.sh --quick` 承担；全仓自检（含五扩展内联自检与守卫/run 锁/issue 的自检与测试）用 `bash scripts/mana-selftest.sh`。
+4. 预检（已脚本化为 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh`，任一项失败非 0 即停，run 启动先跑它；下述清单即脚本覆盖的语义）：`HERDR_ENV=1`、`herdr status`、Pi 入口、push/forge 认证/CI 通道，确认本 pane 已启用自主模式（`printenv MANA_AUTONOMOUS` 为 `1`，否则 safe-guard 会在 run 中途弹确认），确认工人侧三处扩展（§0.7）已装入 `~/.pi/agent/extensions/` 且三条 `*_SELFTEST=1 bun …` 全绿、`~/.omp/agent/config.yml` 含 `ask: {timeout: 30}`，读出 pi 当前的默认线路写入 `state.worker_model`（**仅记录与对照，不改写、不传派发参数**）：`jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`（缺任一字段即预检失败，不得猜），并**先算 tier**：对每条 lane 的 `target` 路径跑 `check-mana-grant-scope.py --paths <paths> --allow-path ...`。未被 `tier_grants` 覆盖的 tier B lane 在这里一次性汇总上报 CTO（一个 run 最多问一次），获批后写入 `tier_grants` 再派发。缺任一预检项现在报，别等 N 条 lane 跑完。pig 为可选工人线路：预检 f 段（pig 门）仅在 pig 二进制在位时校验 pig 侧 herdr 状态扩展（`~/.pig/agent/extensions/herdr-agent-state.ts`）的装机与 `reportArgs` 自检，未装 pig 则 SKIP 不拦。契约回归面以 `node checks/all.check.mjs` 为准：一条命令跑完全部 `checks/*.check.mjs` 的无参数断言与 `--self-test` drill 两种模式（`--only <子串>` 单点排查）；不得以手写 `for f in checks/*.check.mjs` 枚举当回归面依据——漏列即漏验。预检 d 门的契约回归面由 `~/.omp/agent/skills/mana/scripts/mana-selftest.sh --quick` 承担；全仓自检（含五扩展内联自检与守卫/run 锁/issue 的自检与测试）用 `bash ~/.omp/agent/skills/mana/scripts/mana-selftest.sh`。
 5. 若新增 lane、扩大文件/路径边界或改变 acceptance，回 intake 更新 Issue 后重新获得一次 CTO 授权；不偷渡范围。
 
 ### resume（崩溃/重启恢复）
@@ -186,15 +188,15 @@ Issue #8 验收原文：
 
 - 每条需持续会话的 lane（pi 线路；pig 分支见下条）：先从当前 orchestrator pane 用 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 创建**下方横切**的本 run 专属 pane（`--env` 落在 pane 的 shell 上，pi 继承；不得用 `--direction right`）。读取返回的 `workspace_id`、`pane_id` 后直接启动：`herdr agent start <agent-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（`--` 之后是 pi 原生参数；**不带 `--model`**——线路由 pi 启动时按配置默认顺势使用）。`<agent-name>` 和 branch 必须唯一，写入 state。
 - **启动后校验与限一次自愈（通用条目，适用于本文件所有 `herdr agent start` 调用点）**：`agent start` 是**半成功敏感**操作——start 返回的 JSON 可能没有 `result` 键，但 pi 进程其实已在 pane 里跑起来（`herdr pane get <pane-id>` 显示该 pane 有 `agent`、`herdr pane read` 见 TUI），只是 **agent 名没注册**（run #38 实测形态）。**唯一通过判据是 `herdr agent get <agent-name>` 成功返回具名 agent**（形如 `name=<agent-name>`、`agent_status=idle|working`），不能只看 start 的返回 JSON。因此 start 返回后**立即**校验：`herdr agent get <agent-name>` 报 `agent_not_found` 且目标 pane **非空**（`herdr pane get <pane-id>` 有 `agent` 字段、`herdr pane read` 已有进程输出）即判**半成功**——pane 被无人认领的 pi 进程占住，此后 `agent get` 恒 `agent_not_found`、再次对同一 pane `agent start` 恒报 `agent_pane_busy: agent target pane <pane> is not an available shell`，lane 会静默卡死。半成功时**限一次自愈**：① `herdr pane close <pane-id>`；② 重新 `herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus` 取新 `pane_id`，state 同步更新 `pane_id`；③ 重新 `herdr agent start <agent-name> --kind pi --pane <新 pane-id> -- --exclude-tools ask_question`（agent 名可复用——旧名未注册即仍可用；**不带 `--model`**）；④ 再跑一次上面的 `agent get` 校验。**只自愈一次**；再次失败则**不静默、不死循环**：把 `blocker`（含 start 原始返回、`agent get` 结果、pane 现状三样证据）写入 state 并上报，且**不得把 pane 留在无人认领状态**——上报前先 `herdr pane close` 收掉该 pane。**额度语义**：半成功是**环境问题而非工人问题**（agent 名注册发生在 brief 投递之前，工人尚未参与，按 attempt 计会误伤工人并把一次环境抖动记成一次工人失败），故本条 close/split/start 自愈**不推进 `attempt`、不消耗 `max_rounds`**，只在 `decision_log`（同步 `decisions.tsv`）记一行。与 §3 的 `attempt=2` 重派区分：重派是**工人侧**失败后换 fresh worker 走完整流程并按 attempt 规则消耗一轮额度；本条是 dispatch 内的**环境侧**自愈，不换 worker、不投 brief、不碰 attempt。**pig 线路不适用本条**：pig 不用 named agent（`herdr agent start` 根本不参与，直接 `herdr pane run <pane-id> pig -a`），没有 agent 名可校验，pane 侧异常按 §2 pig 分支处理。
-- **pig lane 分支（可选工人线路；除本条所列差异外，其余规则与 pi 线路共用）**：herdr 不识别 pig（`--kind` 无 `pig` 取值、无屏检测），**不用 named agent API，全程走 pane API**——pane split 同上条（`--env MANA_WORKER=1` 照带），随后 `herdr pane run <pane-id> pig -a`（`-a` 跳过项目信任提示；herdr 对 pig 的状态感知靠 pig 侧自报扩展 `~/.pig/agent/extensions/herdr-agent-state.ts`，扩展从 `~/.pig/agent/extensions` 自动发现、无需 `-e`，装机由本仓 `extensions/pig/` 与 `scripts/mana-preflight.sh` f 段 pig 门保证；**不传 `--model`**，与 pi 同策略，线路靠事后回读取证）。pig lane 的 `agent_name` 记 pane id：`herdr agent get/read/wait` 均以 pane id 为 target。打回/重投不用 `herdr agent prompt`/`herdr agent send-keys`（对 pig 报 `agent_not_ready: not an active named agent`），改用 `herdr pane send-text <pane> <text>` 紧接 `herdr pane send-keys <pane> enter` 投递。
+- **pig lane 分支（可选工人线路；除本条所列差异外，其余规则与 pi 线路共用）**：herdr 不识别 pig（`--kind` 无 `pig` 取值、无屏检测），**不用 named agent API，全程走 pane API**——pane split 同上条（`--env MANA_WORKER=1` 照带），随后 `herdr pane run <pane-id> pig -a`（`-a` 跳过项目信任提示；herdr 对 pig 的状态感知靠 pig 侧自报扩展 `~/.pig/agent/extensions/herdr-agent-state.ts`，扩展从 `~/.pig/agent/extensions` 自动发现、无需 `-e`，装机由正本仓 `extensions/pig/` 与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` f 段 pig 门保证；**不传 `--model`**，与 pi 同策略，线路靠事后回读取证）。pig lane 的 `agent_name` 记 pane id：`herdr agent get/read/wait` 均以 pane id 为 target。打回/重投不用 `herdr agent prompt`/`herdr agent send-keys`（对 pig 报 `agent_not_ready: not an active named agent`），改用 `herdr pane send-text <pane> <text>` 紧接 `herdr pane send-keys <pane> enter` 投递。
 - **实际线路靠回读取证，不靠锁（pi/pig 两条线路共用本条结论，仅取证路径分线路）**：每条 lane 启动后读会话 jsonl 的**首条** `type == "model_change"` 记录的 `provider`/`modelId` 写入 `state.lanes[].model`，以事实值为准：与 `state.worker_model` 不一致时在 state 记一行原因（run 期间 pi 默认可能已被切换），不因此停 lane。运行中 jsonl **新增** `model_change` 属中途换线：记 `blocker` 与原文上报，不自行换回。取证路径：pi 用 `herdr agent get <agent-name>` 取 `agent_session` 指向的会话 jsonl（`pi --list-models` 非交互模式不可用，勿用）；pig 的 `agent_session` 在 herdr 0.9.0 下恒为 null（即使自报扩展带了 `--agent-session-path`），改扫 `~/.pig/agent/sessions/<slug>/*.jsonl` 里**最新的那份**，同样读首条 `model_change`。
 - **默认线漂移处理规则（line drift；本仓第四种漂移，与既有技能漂移 #27/配置漂移 §0.7/格式化漂移 #61 三类显式区分，对照 AGENTS.md 表）**：
   - **定义**：`~/.pi/agent/settings.json` 当前默认线 ≠ run 的 `state.worker_model`，或某 lane 会话 jsonl 首条 `model_change` 与该默认线不一致，或运行中出现**新增** `model_change`——三者任一即漂移。
   - **取证**：截获 settings 当前 `defaultProvider`/`defaultModel`、`state.worker_model`、jsonl `model_change` 原文与时间戳，四样一起留档。
-  - **处置**：不自行切线、不改写 `state.worker_model`（预检对两者均只读，`scripts/mana-preflight.sh` 线路门 run 启动即对漂移 FAIL，fail-closed；漂移基线由环境变量 `MANA_RUN_ID` 指向本 run 的 `<repo>/.mana/$MANA_RUN_ID/state.json`，未设或无该 state 记 fresh run 不判漂移，**不得**把其它历史 run 的 worker_model 当基线）；记 `decision_log`（同步 `decisions.tsv`）+ `blocker`（含 baseline、当前值、settings 摘要、时间）并上报 CTO。
+  - **处置**：不自行切线、不改写 `state.worker_model`（预检对两者均只读，`~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 线路门 run 启动即对漂移 FAIL，fail-closed；漂移基线由环境变量 `MANA_RUN_ID` 指向本 run 的 `<repo>/.mana/$MANA_RUN_ID/state.json`，未设或无该 state 记 fresh run 不判漂移，**不得**把其它历史 run 的 worker_model 当基线）；记 `decision_log`（同步 `decisions.tsv`）+ `blocker`（含 baseline、当前值、settings 摘要、时间）并上报 CTO。
   - **容量/不可用 ≠ 漂移**：线路门三态冒烟的 `capacity`（额度/速率/并发）与 `unavailable`（连接/认证等）是**线路健康态**，漂移是**基线一致性态**；两维独立判定、独立文案，容量恢复不等于漂移消除，反之亦然。
 - 工人侧三处扩展（§0.7）由 `MANA_WORKER=1` 自动接管，brief **不再需要**逐条交代 `PI_SKIP_REVIEW=1` 之类的绕过技巧；brief 只写业务边界。
-- Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付洁净契约（`DONE:` 前工作区必须洁净，见下条）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。
+- Pi brief 用三段式（借 pi-crew 的 `goal/context/instructions`）：`goal` 一句话写完成态与判定方式；`context` 只放仓库里查不到的事实（CTO 已批准的范围与决策、lane 边界）；`instructions` 每条一个动作或一条禁令，末尾给停止条件。另需包含：逐条 acceptance 命令、文件/路径边界、禁触共享只读资源、禁 push/PR/merge/关闭自身 pane、禁运行 `/review` 与 `/end-review`、禁提问（要决策就自决并写入『决策』段）、交付洁净契约（`DONE:` 前工作区必须洁净，见下条）、交付格式。改动落在 `tier_grants` 内时，acceptance 必须包含一条 `python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --base origin/main --allow-key <前缀>`，让工人在自己的 worktree 内先自证键范围。不得要求 worker 自开 PR、merge 或关闭自身 pane，也不得把决策委派给工人。
 - 工人交付：完成所有工作后只输出一个机器可解析的最终状态行，且**首字符必须为** `DONE:` 或 `BLOCKED:`；随后可列证据（命令输出/路径/diff 摘要）。未出现该前缀的自然语言“完成”不是终态，orchestrator 必须 `read` 后追问，不得回收。**交付洁净契约**：输出 `DONE:` 前该 lane worktree 的工作区必须洁净——`git status --short` 输出为空。提交后由宿主工具自动产生的**纯格式化**改动（如 pi-lens deferred format 留下的改动），按 CTO 方案 C **一律 `git checkout --` 丢弃，不与成果一并 commit**；**判定读数方法见 §3 第 2 步 ② 归类**（同一口径，§2 §3 不各写一套）。底线不变：不得以「保持工作区干净」为名丢弃任何**语义**改动——语义改动必须打回让工人自己 commit，工人已收尾或不可用时编排者方可代 commit 并在 `decision_log` 标注「编排者代 commit」。
 - 工人 `BLOCKED:` 后必须紧跟两行：`QUESTION:` 与 `RECOMMENDED:`（工人自评的建议项）。这是 needs_input 而不是失败：orchestrator 先在授权范围内按 `RECOMMENDED` 自决，写入 `state.decision_log`，再按 attempt 规则重投——`attempt=1` 可 `herdr agent prompt` 复用同 pane 投递自决结论；`attempt=2` 必须换 fresh agent（按 §3 第 2 条顺序：回收旧 pane → 双 `not_found` → 新 pane + 新 agent，仍不传 `--model`），并把自决结论写进合并 brief（见下）的「历次后续指令」与「已作出的自决结论」字段。重投最多 2 轮——即该 lane 的 `max_rounds` 字段（默认 2，见 §1 run 第 3 步），与 `attempt ≤ 2` 是同一上限的两个视角；超限置 `blocked`；只有决策触及 tier 判定/授权边界/§0.6 红线才上报 CTO。**不要在 run 中途把工人的问题原样转给 CTO**。
 - `agent_prompt_stalled` 或 wait timeout 不代表未投递或失败；先 `herdr agent get/read`，不得重复 prompt。实际确认 UI 按 §0.7 裁决。
@@ -263,7 +265,7 @@ Issue #8 验收原文：
    used_hash=$(git hash-object skills/mana/SKILL.md)                                 # 在用版 hash
    ```
 
-3. **读 lane 事件**：优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。
+3. **读 lane 事件**：优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。
 
 **pig lane 等待语义（pane API，无 named agent）**：pig 完成一轮后 herdr 显示 **done** 而非 idle。**等本轮开始**：`pane send-text` + `pane send-keys enter` 之后**立即** `herdr agent wait <pane> --until working --timeout <MS>`——先 sleep 会错过短 working 窗口；**等本轮结束**：`herdr agent wait <pane> --until done --timeout <MS>`。`--until idle` 只在从未 working 过的初始空闲上可靠，**不得**当完成信号（工作过的空闲上必超时）。
 
@@ -323,10 +325,10 @@ Issue #8 验收原文：
 
 run 终态（全部 lane `landed|blocked|failed`）后做一次复盘，四个动作按序执行：
 
-1. **挖类目**：读本 run 的 `state.decision_log`、`blockers`、`decisions.tsv` 与 Issue 评论；同一失误出现**两次及以上**（跨 run 或同 run）才算一个 mistake class（失误类目），只出现一次不算——避免把偶发当规则。可用 `bash scripts/mana-postmortem.sh <run-dir>` 从 state.json 抽 blockers/decision_log 逐条摘要、按 phase 计数并标出疑似重复关键词辅助判类，判定仍以人工为准。
+1. **挖类目**：读本 run 的 `state.decision_log`、`blockers`、`decisions.tsv` 与 Issue 评论；同一失误出现**两次及以上**（跨 run 或同 run）才算一个 mistake class（失误类目），只出现一次不算——避免把偶发当规则。可用 `bash ~/.omp/agent/skills/mana/scripts/mana-postmortem.sh <run-dir>` 从 state.json 抽 blockers/decision_log 逐条摘要、按 phase 计数并标出疑似重复关键词辅助判类，判定仍以人工为准。
 2. **选层级**：每个 mistake class 按**最高可行**层级强制：`1 架构消除 → 2 类型/lint/CI → 3 测试行为 → 4 文档/agent 规则（最后）`；选中哪层就写明为什么更高一层不成立（无权限、属跨 run 基础设施等）。
 3. **取证**：任何新增的强制手段（脚本/检查/测试）必须先在**一条真实历史错误**上失败一次，留下失败输出作为证据，本地与 CI 用同一命令；仅有文档改动视为不满足本条，必须标注「待有下一次真实错误时验证」。
-4. **红线只上报**：复盘不得在本 run 内顺手改 `tier_grants`、`scripts/mana-run-lock.py`、`scripts/check-mana-grant-scope.py` 或其他 run 基础设施；触及这些一律写进 §5 `Attention` 上报 CTO。
+4. **红线只上报**：复盘不得在本 run 内顺手改 `tier_grants`、`~/.omp/agent/skills/mana/scripts/mana-run-lock.py`、`~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py` 或其他 run 基础设施；触及这些一律写进 §5 `Attention` 上报 CTO。
 
 复盘产出的新规则与强制手段回填 `AGENTS.md` 的「规则 ↔ 强制手段 ↔ 首次发现 run」对照表；规则已存在但无强制手段 = 重复发生，同一变更补齐强制手段或删规则。
 
@@ -334,7 +336,7 @@ run 终态（全部 lane `landed|blocked|failed`）后做一次复盘，四个�
 
 | mana 需求 | 采用能力 |
 | --- | --- |
-| 目标续航 | state.json + `mana-heartbeat.sh` 心跳为唯一权威；OMP goal runtime 仅为便利层（暴露 goal tool 时 arm） |
+| 目标续航 | state.json + `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` 心跳为唯一权威；OMP goal runtime 仅为便利层（暴露 goal tool 时 arm） |
 | Pi lane dispatch | `herdr worktree create` + `herdr agent start --kind pi` |
 | pig lane dispatch（可选线路） | 同 `herdr worktree create`；pane split 带 `--env MANA_WORKER=1` 后 `herdr pane run <pane> pig -a`（herdr 无 pig kind，走 pane API，不用 named agent） |
 | 工人线路与模型 | 不传 `--model` 顺势吃 pi 默认；`herdr agent get` → session jsonl 首条 `model_change` 回读取证写 `state.lanes[].model`；pig 取证扫 `~/.pig/agent/sessions` 最新一份（`agent_session` 恒为 null），同口径 |

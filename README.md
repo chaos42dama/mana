@@ -33,12 +33,12 @@ checks/all.check.mjs          # 契约 check 聚合 runner：一条命令跑全�
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
 checks/mana-verdict-ledger.check.mjs  # 验证账本契约自检：head_sha/verdict/decisions.tsv/失效规则（--self-test 跑合成 drill）
 checks/mana-orchestrator-contract.check.mjs  # 编排者侧契约自检：herdr CLI 形态/超时≠未投递/不锁线/交付洁净/回收双验证（--self-test 跑合成残缺负例）
-scripts/check-mana-grant-scope.py  # tier 授权守卫：路径 glob + toml 键前缀判定（--self-test 自带）
-scripts/check-mana-issue.py        # intake Issue 骨架校验：6 段缺项即非 0，run 前自证（配套 test_check_mana_issue.py）
-scripts/mana-run-lock.py           # run 单 owner 协作锁入口（flock + exec；7 组测试见 test_mana_run_lock.py）
-scripts/mana-preflight.sh          # run 预检六门脚本（环境/pi 解析/线路/扩展自检/装机/配置；任一 FAIL 非 0 即停）
-scripts/mana-selftest.sh           # 全仓自检入口（10 步不早退：契约+守卫/run 锁/issue 自检+五扩展；--list/--quick/--only）
-scripts/test_mana_selftest.py      # 自检入口回归测试（含两条真负例：注入钩子必须真非 0）
+scripts/check-mana-grant-scope.py  # 装机至 ~/.omp/agent/skills/mana/scripts/；tier 授权守卫（--self-test 自带）
+scripts/check-mana-issue.py        # 装机至 `~/.omp/agent/skills/mana/scripts/`；intake Issue 骨架校验
+scripts/mana-run-lock.py           # 装机至 `~/.omp/agent/skills/mana/scripts/`；run 单 owner 协作锁入口
+scripts/mana-preflight.sh          # 装机至 `~/.omp/agent/skills/mana/scripts/`；run 预检七门（任一 FAIL 非 0 即停）
+scripts/mana-selftest.sh           # 装机至 `~/.omp/agent/skills/mana/scripts/`；全仓自检入口（--list/--quick/--only）
+scripts/test_mana_selftest.py      # 装机至 `~/.omp/agent/skills/mana/scripts/`；自检入口回归测试
 ```
 
 ## 要求
@@ -52,13 +52,13 @@ scripts/test_mana_selftest.py      # 自检入口回归测试（含两条真负�
 | git 仓库 | 从主 checkout 运行，不要在链接 worktree 里发起 run |
 | `python3` | 守卫脚本与状态探测 |
 | forge CLI（`gh`/`fj`/`glab` 任一） | 开 Issue、建 PR、merge；未装则 PR 命令打印出来由你执行 |
-| 预检脚本 | Run 前跑 `bash scripts/mana-preflight.sh`（六门全过才派发；线路门对 `pi -p` 冒烟三态分类 healthy/capacity/unavailable，额度·速率·并发类失败单独报 capacity，并判定默认线漂移——`.mana/*/state.json` 的 `worker_model` ≠ 当前 settings 默认线即 FAIL，列 baseline/当前值取证；`MANA_PREFLIGHT_SKIP_SMOKE=1` 可跳线路冒烟） |
+| 预检脚本 | Run 前跑 `bash ~/.omp/agent/skills/mana/scripts/mana-preflight.sh`（六门全过才派发；线路门对 `pi -p` 冒烟三态分类 healthy/capacity/unavailable，额度·速率·并发类失败单独报 capacity，并判定默认线漂移——`.mana/*/state.json` 的 `worker_model` ≠ 当前 settings 默认线即 FAIL，列 baseline/当前值取证；`MANA_PREFLIGHT_SKIP_SMOKE=1` 可跳线路冒烟） |
 
-pig 是可选工人线路：装了 pig 的机器可把 lane 工人换成 pig——herdr 通过 pig 侧自报扩展感知其状态，该扩展与预检 pig 门由仓内 `extensions/pig/` 与 `scripts/mana-preflight.sh` 保证；未装 pig 时只用 pi 工人，pig 门 SKIP 不拦。
+pig 是可选工人线路：装了 pig 的机器可把 lane 工人换成 pig——herdr 通过 pig 侧自报扩展感知其状态，该扩展与预检 pig 门由仓内 `extensions/pig/` 与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 保证；未装 pig 时只用 pi 工人，pig 门 SKIP 不拦。
 
 ## 安装
 
-**仓库正本 = 唯一事实源；用户级目录（`~/.omp/agent/skills`、`~/.omp/agent/extensions`、`~/.pi/agent/extensions`、`~/.agents/skills`）是安装产物**，由脚本覆盖，不要手改。
+**仓库正本 = 唯一事实源；用户级目录（`~/.omp/agent/skills`、`~/.omp/agent/extensions`、`~/.pi/agent/extensions`、`~/.agents/skills`）是安装产物**，由脚本覆盖，不要手改。`~/.omp/agent/skills/mana/scripts/` 是全局 mana 脚本目录。
 
 ```bash
 # 安装/修复（幂等：内容相同不写，不动 mtime）
@@ -69,7 +69,7 @@ bash scripts/mana-install.sh --check
 bash scripts/mana-install.sh --dry-run
 ```
 
-脚本只复制下表列出的文件（`cmp -s` 判定，与 `scripts/mana-preflight.sh` 装机门同口径；其中 `skills/mana/references/*.md` 按 glob 展开逐文件比对，新增 references 自动纳入装机），绝不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
+脚本只复制下表列出的文件（`cmp -s` 判定，与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同口径；其中 `skills/mana/references/*.md` 与 `scripts/*` 按 glob 展开逐文件比对，新增 references 或脚本自动纳入装机），绝不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
 
 | 仓库正本 | 目标 |
 | --- | --- |
@@ -79,6 +79,7 @@ bash scripts/mana-install.sh --dry-run
 | `extensions/safe-guard.ts`、`extensions/mana-compact.ts` | `~/.omp/agent/extensions/` |
 | `extensions/pig/herdr-agent-state.ts` | `~/.pig/agent/extensions/`（父目录存在时；见下节） |
 | `skills/mana/references/*.md` | `~/.omp/agent/skills/mana/references/`（glob 展开，#59 起随脚本分发） |
+| `scripts/*` | `~/.omp/agent/skills/mana/scripts/`（glob 展开，脚本保留可执行位） |
 
 自检（需要 Bun）：
 
@@ -94,17 +95,16 @@ PI_MANA_WORKER_COMPACT_SELFTEST=1 bun extensions/pi/mana-worker-compact.ts
 MANA_COMPACT_SELFTEST=1 bun extensions/mana-compact.ts
 ```
 
-### 安装 tier 守卫与 run 锁到目标仓
+### 安装全局脚本与 run 锁
+
+脚本已由上面的 `bash scripts/mana-install.sh` 一次性装入 `~/.omp/agent/skills/mana/scripts/`，目标仓不再复制脚本。安装后直接运行：
 
 ```bash
-mkdir -p scripts
-cp mana/scripts/check-mana-grant-scope.py scripts/
-cp mana/scripts/mana-run-lock.py scripts/
-python3 scripts/check-mana-grant-scope.py --self-test
+python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --self-test
 # ✓ self-test ok
 
 # run 锁自检（可选）
-python3 scripts/test_mana_run_lock.py
+python3 ~/.omp/agent/skills/mana/scripts/test_mana_run_lock.py
 # Ran 7 tests ... OK
 ```
 
@@ -122,7 +122,7 @@ bash scripts/mana-install.sh
 
 脚本的 cond 语义保证：`~/.pig/agent/extensions/` 不存在时该条目显示 `skip（父目录不存在）` 并继续，不报错。
 
-**验证**：跑 `bash scripts/mana-preflight.sh`，看输出里 `pig 门:` 那一行——扩展在位且 `reportArgs()` 自检绿即 `ok`。注意：**preflight 只发现并报错，不负责安装**；发现缺失时回到上一条用装机脚本修复。
+**验证**：跑 `bash ~/.omp/agent/skills/mana/scripts/mana-preflight.sh`，看输出里 `pig 门:` 那一行——扩展在位且 `reportArgs()` 自检绿即 `ok`。注意：**preflight 只发现并报错，不负责安装**；发现缺失时回到上一条用装机脚本修复。
 
 **未装 pig**：该门 SKIP 不拦，`/mana run` 照常只用 pi 工人跑完。
 
@@ -145,21 +145,21 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 | 入口 | 用途 |
 | --- | --- |
-| `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发。Issue 定稿先过 `python3 scripts/check-mana-issue.py` 骨架校验，`exit 0` 才可进 run |
+| `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发。Issue 定稿先过 `python3 ~/.omp/agent/skills/mana/scripts/check-mana-issue.py` 骨架校验，`exit 0` 才可进 run |
 | `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；how/why 支持并行只读取证 lane（how：Complex 拆切面 ≤ `max_parallel_lanes`；why：代码锚点先行 + 每证据类别一条 investigator + 四档证据分级）；结论默认不落盘，仅在回复里交付，明确要求才写 `.mana/<context-id>/`；`/mana echo` 另做目标对齐自检 |
 | `/mana architect <范围>` | **context**：只读多线路设计入口——2–3 条独立 sketch lane 交叉评审合成 design package，落盘 `.mana/<design-id>/`；不写实现代码、不 push/merge，实现归 `/mana run` |
 | `/mana prototype <决策问题>` | **context**：只读原型入口——throwaway 多变体原型 + 一个 switcher + 观测量回答一个具体决策，落盘 `.mana/<probe-id>/`；原型永不进主干，不承诺自动截图（UI 类只到能渲染 + 人工看） |
 | `/mana veri <目标>` | **context**：只读验证技能生成入口——init（五步访谈 → 生成 verify-<app> 技能 → 端到端实跑）/doctor/status 三口，永不改产品代码；maintain 例行对账（三结果 `clean|changed|blocked`，`--source-only` 只标 partial）；落盘/维护细节见技能 veri 条目 |
 | `/mana run #<issue>` | **run**：唯一启动口令，默认即自主 landing（PR→CI→merge→清理）；`--manual-landing` 保留人工 merge 门 |
 
-> `/mana run` 有前置：目标仓须逐项满足技能的「仓库前置条件」节（`scripts/mana-run-lock.py`、tier 守卫、`.git/info/exclude`、仓内红线定义、`tier_grants` 批准、工具链）。缺项只走 context/intake。
+> `/mana run` 有前置：先由正本仓运行 `bash scripts/mana-install.sh` 装机，使全局 mana scripts/ 含 run-lock 与 tier guard；目标仓再满足其余「仓库前置条件」（`.git/info/exclude`、仓内红线定义、`tier_grants` 批准、工具链）。缺项只走 context/intake。
 
 ### 一次 run 的生命周期
 
 1. **intake** 已产出 Issue：每个 lane 有目标、文件边界、可执行 acceptance、tier、建议 `tier_grants`。
 2. CTO 一句 `/mana run #<issue>` 即为该 run 的一次性授权。
 3. 预检（herdr/Pi/认证/CI/`MANA_AUTONOMOUS`/工人侧三扩展自检/tier 预测；`state.worker_model` 记一次 `jq -r '.defaultProvider + "/" + .defaultModel' ~/.pi/agent/settings.json`，仅记录不派发）→ 逐 lane `herdr worktree create`，`herdr agent start ... -- --exclude-tools ask_question` **不传 `--model`**：工人启动时按 pi 当前默认直接使用；启动后 `herdr agent get` 回读会话 jsonl 首条 `model_change`，实测 `provider/modelId` 写入 `state.lanes[].model` 取证。
-4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后先查工作树（`git status --short` 非空则不绑 `head_sha`、不判 `verified`，先让工人 commit 或明确丢弃并记 `decision_log`，处置完再重跑 acceptance）→ 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论；重投按 `retry_mode` 分类：`network` 原样重投不计数、`context-overflow` 缩小文件边界、`tool-error` 记 blocker 不换线；超 `max_wall_minutes` 先取证再裁决，不直接判失败）→ 回收 pane。打回/重派按 `attempt` 走：第 1 轮可同 pane `herdr agent prompt`；第 2 轮（唯一一次重派）必须先回收旧 pane（`close` + agent/pane 双 `not_found`）再新建 pane + 新 agent（仍不传 `--model`），且一律投「合并 brief」——原始 brief 全文 + 历次后续指令 + 旧 agent 最终状态行与 head SHA + 验收失败实际输出；lane 记 `attempt` 与 `superseded_by_agent` 可对账。
+4. 监督循环：每轮 sweep 先「三读」——重读 state → 从 `origin/main` 重读技能正本比对 hash（漂移记 `drift` 并**按主干版继续**，不静默沿用旧版；每轮把 `drift_checked_at` 写回 state）→ 收 lane 事件。OMP goal runtime 仅为便利层，`state.json` + `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` 心跳是唯一权威续航。之后探测工人 → `DONE` 后先查工作树（`git status --short` 非空则不绑 `head_sha`、不判 `verified`，先让工人 commit 或明确丢弃并记 `decision_log`，处置完再重跑 acceptance）→ 打回或 verified（每 lane 记 `head_sha` + `verdict`，新 commit 作废旧结论；重投按 `retry_mode` 分类：`network` 原样重投不计数、`context-overflow` 缩小文件边界、`tool-error` 记 blocker 不换线；超 `max_wall_minutes` 先取证再裁决，不直接判失败）→ 回收 pane。打回/重派按 `attempt` 走：第 1 轮可同 pane `herdr agent prompt`；第 2 轮（唯一一次重派）必须先回收旧 pane（`close` + agent/pane 双 `not_found`）再新建 pane + 新 agent（仍不传 `--model`），且一律投「合并 brief」——原始 brief 全文 + 历次后续指令 + 旧 agent 最终状态行与 head SHA + 验收失败实际输出；lane 记 `attempt` 与 `superseded_by_agent` 可对账。
 5. landing：orchestrator push、建 PR（PR body 是固定简报模板：`## Why`/`## What changed`/`## Scope`/`## Tradeoffs`（可省）/`## Blast Radius`/`## Verification` 六段、全文 ≤约 40 行、squash commit body 即 PR body，`## Verification` 每条带验收命令 + 实际输出摘要 + 绑定 head SHA）、等 CI、merge 前复跑守卫，`exit 0` 才 squash merge，最后清理 worktree/branch 并关 Issue。
 
 ### tier_grants：机器可判定的授权
@@ -170,7 +170,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
     "scope": "前端文案配置化",
     "patterns": ["apps/web/", "ops/config/copy.*.toml"],
     "max_tier": "A",
-    "guard": "python3 scripts/check-mana-grant-scope.py --base origin/main --allow-path apps/web/ --allow-path 'ops/config/copy.*.toml' --allow-key ui.txt.",
+    "guard": "python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --base origin/main --allow-path apps/web/ --allow-path 'ops/config/copy.*.toml' --allow-key ui.txt.",
     "approved_at": "2026-09-16"
   }
 ]
@@ -215,13 +215,13 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 ### 关键脚本
 
-- `scripts/mana-run-lock.py` — run 单 owner 持锁入口（`fcntl.flock`，竞争失败返回 73）
-- `scripts/check-mana-grant-scope.py` — tier 守卫（`--self-test` / `--paths` 预测 / `--base+--allow-key` 复核）
-- `scripts/mana-preflight.sh` — run 预检（环境/pi 解析/线路/装机/配置/扩展自检）
-- `scripts/mana-heartbeat.sh` — 心跳兜底（可 crontab 定时唤醒 sweep）
-- `scripts/mana-install.sh` — 装机同步（仓库正本 → 用户级目录，消除 hand-synced list）
-- `scripts/mana-selftest.sh` — 全仓自检（`--quick` 为预检 d 门回归面）
-- `scripts/check-mana-issue.py` — intake Issue 骨架校验（`exit 0` 才可授权）
+- `~/.omp/agent/skills/mana/scripts/mana-run-lock.py` — run 单 owner 持锁入口（`fcntl.flock`，竞争失败返回 73）
+- `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py` — tier 守卫（`--self-test` / `--paths` 预测 / `--base+--allow-key` 复核）
+- `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` — run 预检（环境/pi 解析/线路/装机/配置/扩展自检）
+- `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` — 心跳兜底（可 crontab 定时唤醒 sweep）
+- `scripts/mana-install.sh` — 正本仓安装器（同步技能、references 与全局脚本）
+- `~/.omp/agent/skills/mana/scripts/mana-selftest.sh` — 全仓自检（`--quick` 为预检 d 门回归面）
+- `~/.omp/agent/skills/mana/scripts/check-mana-issue.py` — intake Issue 骨架校验（`exit 0` 才可授权）
 - `node checks/all.check.mjs` — 契约回归面（全部 `checks/*.check.mjs` 无参数断言 + `--self-test` drill）
 
 ### 关键环境变量
@@ -272,7 +272,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 
 ## Why it survives unattended runs
 
-1. **State is the only truth**: all run state lives in `<repo>/.mana/<run-id>/state.json`; conversation memory is never trusted. The OMP goal runtime is a convenience layer only — `state.json` plus the `scripts/mana-heartbeat.sh` heartbeat is the sole authoritative continuation; losing the goal tool never stops a run.
+1. **State is the only truth**: all run state lives in `<repo>/.mana/<run-id>/state.json`; conversation memory is never trusted. The OMP goal runtime is a convenience layer only — `state.json` plus the `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` heartbeat is the sole authoritative continuation; losing the goal tool never stops a run.
 2. **DONE is a claim, not a verdict**: the orchestrator re-runs acceptance criteria itself before believing a worker.
 3. **Lanes never push or merge**: publishing stays with the orchestrator; workers are isolated in worktrees. Orchestrator pushes only this run's own branches, append-only (never force-push): one run-branch snapshot push after each code lane turns `verified` (for `/mana resume` audit), plus the landing push; a failed push is recorded as a blocker in the report's Attention section and never blocks acceptance.
 4. **Tier is machine-judged**: `tier_grants` (path globs + optional toml key prefixes + guard command); guard `exit 0` ⇒ autonomous landing, otherwise the run stops at preflight.
@@ -299,9 +299,7 @@ bash scripts/mana-install.sh --dry-run
 
 # Tier guard + run lock into your repo
 mkdir -p scripts
-cp mana/scripts/check-mana-grant-scope.py scripts/
-cp mana/scripts/mana-run-lock.py scripts/
-python3 scripts/check-mana-grant-scope.py --self-test
+python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --self-test
 python3 scripts/test_mana_run_lock.py   # optional: 7 lock tests
 # pig host: pig-side herdr state extension rides the same install script (see "pig worker route (optional)" below)
 bash scripts/mana-install.sh
@@ -318,11 +316,11 @@ Requirements: [OMP](https://github.com/can1357/oh-my-pi), [herdr](https://herdr.
 
 **Install (install pig first, then run the install script)**: install pig itself first (this creates `~/.pig/agent/extensions/`), then run `bash scripts/mana-install.sh` — the pig-side extension is installed along with everything else. The script's conditional semantics guarantee that a missing `~/.pig/agent/extensions/` shows `skip (parent dir absent)` and continues instead of erroring.
 
-**Verify**: run `bash scripts/mana-preflight.sh` and look at the `pig 门:` line — `ok` means the extension is in place and its `reportArgs()` self-check is green. Note: **preflight only detects and reports, it never installs**; if it reports a missing extension, fix it with the install script above.
+**Verify**: run `bash ~/.omp/agent/skills/mana/scripts/mana-preflight.sh` and look at the `pig 门:` line — `ok` means the extension is in place and its `reportArgs()` self-check is green. Note: **preflight only detects and reports, it never installs**; if it reports a missing extension, fix it with the install script above.
 
 **Without pig**: the gate SKIPs and `/mana run` runs entirely on pi workers.
 
-pig is an optional worker route: where pig is installed, lanes may run on pig workers — herdr perceives their state through the pig-side self-report extension; both the extension and the preflight pig gate are guaranteed in-repo (`extensions/pig/`, `scripts/mana-preflight.sh`).
+pig is an optional worker route: where pig is installed, lanes may run on pig workers — herdr perceives their state through the pig-side self-report extension; the extension source is in-repo (`extensions/pig/`) and the preflight pig gate is globally installed at `~/.omp/agent/skills/mana/scripts/mana-preflight.sh`.
 
 ## Usage
 
@@ -335,7 +333,7 @@ pig is an optional worker route: where pig is installed, lanes may run on pig wo
 
 **`/mana veri` in practice** — the core idea: every mana run binds its acceptance to a lane's `head_sha` ("DONE is a claim, not a verdict"), but "how this app is launched, driven, and evidenced" used to live only in each agent's session memory. `/mana veri` turns it into a project-local source of truth: `verify-<app>/SKILL.md` (six sections Launch/Doctor/Drive/Evidence/Cleanup/Helpers, real commands and ready signals, no placeholders) plus a feature map whose ledger (front-matter `last_verified_sha`/`verdict`/`prerequisites`) binds evidence to the SHA — any new commit marks the map stale. Generated skills are live-run end to end before delivery (an unexecuted skill is a draft). Daily use: `init` once per repo; `doctor` at any time (mandatory after major functional changes, read-only); `status` for freshness; `maintain` on a human cadence — outcomes `clean` / `changed` (≤1 PR of proven corrections) / `blocked`, and `--source-only` is `partial`, never treated as clean. Maintain edits only the `verify-<app>/` directory and never product code (doc drift fixes the map, product gaps are reported, not papered over); source-wave lanes are read-only and never carry `--model`; live passes are driven solely by the orchestrator. Canonical install: `~/.pi/agent/skills/verify-<app>/` symlinked into OMP at `~/.omp/agent/skills/verify-<app>`; workers generate in the target repo's worktree and user-level installation stays with the landing phase.
 
-`/mana run` has prerequisites: the target repo must satisfy the skill's repo-prerequisites checklist — `scripts/mana-run-lock.py`, the tier guard, `.git/info/exclude`, in-repo red-line definitions, an approved `tier_grants`, and the toolchain. Missing any of them means context/intake only.
+`/mana run` has prerequisites: first run `bash scripts/mana-install.sh` from the mana source repo so `~/.omp/agent/skills/mana/scripts/` contains the run lock and tier guard; the target repo then satisfies the remaining checklist — `.git/info/exclude`, in-repo red-line definitions, an approved `tier_grants`, and the toolchain. Missing any item means context/intake only.
 
 Invariants: never force-push, never touch resources it did not create, never approve a worker's push request, never merge with a failing guard, never report a half-finished lane as complete, never treat a human-waiting UI as control flow, never pin a model in worker args: workers start on pi's current default route; the orchestrator reads the session's first `model_change` into state as evidence and reports any mid-run switch. Orchestrator pushes are limited to this run's own branches (verified-lane snapshots + landing push, append-only); PR bodies are fixed briefs — `## Why` / `## What changed` / `## Scope` / `## Tradeoffs` (omittable) / `## Blast Radius` / `## Verification`, at most ~40 lines, squash commit body = PR body, and every Verification item carries an acceptance command, actual output summary, and bound head SHA.
 
