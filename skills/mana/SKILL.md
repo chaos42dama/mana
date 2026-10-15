@@ -59,7 +59,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 ### 全局装机前置与仓库前置条件
 
-全局技能 ≠ 全局可 run。先由正本仓运行 `bash scripts/mana-install.sh`；两个必需脚本须已装入 `~/.omp/agent/skills/mana/scripts/`。再逐仓核对其余前置，缺项只走 context/intake：
+全局技能 ≠ 全局可 run。先由正本仓运行 `bash scripts/mana-install.sh`；完整指令集镜像到 `~/.omp/agent/skills/mana/`，两个必需脚本须已装入 `~/.omp/agent/skills/mana/scripts/`。预检源变量：`MANA_SRC` 指定扩展正本源，缺省解析顺序为显式 `MANA_SRC` → 当前仓 `git-common-dir` 候选 → 全局镜像目录；镜像同时含 `extensions/` 与 `checks/` 时，镜像目录就是默认源，无需设置 `MANA_SRC`，会跑全装机门与 `mana-selftest.sh --quick`。镜像不完整时保留可见 `WARN` 并降级为已安装扩展自检。`MANA_REPO` 指定 run-state 所属目标仓，缺省为当前工作目录的 git 根。再逐仓核对其余前置，缺项只走 context/intake：
 
 1. `~/.omp/agent/skills/mana/scripts/mana-run-lock.py`：run 单 owner 持锁入口；`python3 ~/.omp/agent/skills/mana/scripts/test_mana_run_lock.py` 自检。
 2. `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py`：tier 守卫；`python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --self-test` 须通过。

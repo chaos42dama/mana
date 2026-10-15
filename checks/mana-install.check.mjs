@@ -1,17 +1,13 @@
 #!/usr/bin/env node
-// 装机脚本契约自检（Issue #31；#59 起 references glob 展开；#1768 起 scripts glob）
-// 无参数：断言 scripts/mana-install.sh 存在且可执行、映射表覆盖目标目录 + references/scripts glob 展开、
-//         --check 判定用 cmp -s（与 scripts/mana-preflight.sh 装机门同口径）、不含对配置/密钥路径的写操作、
-//         SKILL.md intake 段含设计审查四红旗与 §13 承接声明、README 引用脚本且不再手写 cp 列表。
-// --self-test：合成 drill——在临时 HOME 下实跑脚本，验证「目标缺失/落后 → --check 非 0」
-//         「安装后 → --check 为 0」「重跑安装 → 目标 mtime 不变（幂等）」「错参 → 非 0」
-//         「references 目标缺失→非 0 / 安装后→0 / 重跑 mtime 不变 / 新增源文件即被发现（glob 而非硬编码）」。
+// 装机脚本契约自检（Issue #89）：映射、README 表、正本跟踪集必须相等。
+// --self-test 另实跑沙箱装机、幂等、条件接线，以及映射/README 各一组注入负例。
 import assert from "node:assert/strict";
 import {
   readFileSync,
   writeFileSync,
   existsSync,
   statSync,
+  readdirSync,
   mkdtempSync,
   mkdirSync,
   rmSync,
@@ -43,6 +39,58 @@ function run(args, env) {
   }
 }
 
+const MIRROR_EXCLUDES = new Set([".gitignore"]);
+
+function expandTrackedSources(sources) {
+  const files = new Set();
+  for (const source of sources) {
+    const path = join(REPO, source);
+    if (statSync(path).isFile()) {
+      files.add(source);
+      continue;
+    }
+    const walk = (dir, prefix) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const rel = `${prefix}/${entry.name}`;
+        if (entry.isDirectory()) walk(join(dir, entry.name), rel);
+        else if (entry.isFile()) files.add(rel);
+      }
+    };
+    walk(path, source);
+  }
+  return files;
+}
+
+function parseMirrorSources(sourceText) {
+  const match = sourceText.match(/MIRROR_SOURCES=\(([^)]*)\)/);
+  assert.ok(match, "装机脚本声明 MIRROR_SOURCES");
+  return match[1].trim().split(/\s+/);
+}
+
+function parseReadmeSources(readmeText) {
+  const start = readmeText.indexOf("| 仓库正本 | 目标 |");
+  assert.notEqual(start, -1, "README 含仓库正本 → 目标表");
+  const end = readmeText.indexOf("\n\n", start);
+  const table = readmeText.slice(start, end === -1 ? undefined : end);
+  return [...table.matchAll(/^\| `([^`]+)` \|/gm)].map(([, source]) =>
+    source.endsWith("/**") ? source.slice(0, -3) : source,
+  );
+}
+
+function assertMirrorCoverage({ sourceText = script(), readmeText = readFileSync(join(REPO, "README.md"), "utf8") } = {}) {
+  const mapped = expandTrackedSources(parseMirrorSources(sourceText));
+  const documented = expandTrackedSources(parseReadmeSources(readmeText));
+  const tracked = new Set(
+    execFileSync("git", ["-C", REPO, "ls-files"], { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .filter((file) => file && !MIRROR_EXCLUDES.has(file)),
+  );
+  assert.deepEqual([...mapped].sort(), [...tracked].sort(), "装机映射覆盖正本跟踪集");
+  assert.deepEqual([...documented].sort(), [...tracked].sort(), "README 装机表覆盖正本跟踪集");
+  return tracked.size;
+}
+
 function assertContract() {
   const sh = script();
   // 1) 判定口径：逐文件 cmp -s，与 preflight 装机门同口径
@@ -50,7 +98,9 @@ function assertContract() {
     sh.includes("cmp -s"),
     "用 cmp -s 逐文件比对（与 mana-preflight.sh 装机门同口径）",
   );
-  // 2) 映射表覆盖四类目标
+  // 2) 目录镜像来源与真实正本集合机械对齐
+  assert.equal(assertMirrorCoverage(), 47, "镜像集为 47 个跟踪文件（排除 .gitignore）");
+  assert.ok(sh.includes("MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)"), "映射按目录/文件 glob 展开");
   assert.ok(sh.includes("skills/mana/SKILL.md"), "映射表含技能正本");
   assert.ok(
     sh.includes(".omp/agent/skills/mana/SKILL.md"),
@@ -66,28 +116,8 @@ function assertContract() {
   );
   assert.ok(sh.includes(".pi/agent/extensions/"), "工人侧扩展目标目录");
   assert.ok(sh.includes(".omp/agent/extensions/"), "编排者侧扩展目标目录");
-  // 2b) references 目录按 glob 展开进映射（#59）：源是 glob 而非硬编码文件名清单
-  assert.ok(
-    sh.includes("skills/mana/references/*.md"),
-    "映射表含 references glob 源（skills/mana/references/*.md）",
-  );
-  assert.ok(
-    sh.includes(".omp/agent/skills/mana/references/"),
-    "references → ~/.omp/agent/skills/mana/references/",
-  );
-  assert.ok(
-    !sh.includes("architect-rationale-template.md|") &&
-      !sh.includes("architect-runner-prompt.md|"),
-    "不得把 references 文件名硬编码进 MAPPINGS",
-  );
-  assert.ok(
-    sh.includes('for _script in "$REPO_ROOT"/scripts/*'),
-    "scripts 映射按 glob 展开",
-  );
-  assert.ok(
-    sh.includes('$HOME_DIR/.omp/agent/skills/mana/scripts/$(basename "$_script")'),
-    "所有 scripts 安装到全局 mana skill scripts 目录",
-  );
+  assert.ok(sh.includes("find \"$REPO_ROOT/$_source\" -type f"), "映射递归展开目录文件");
+  assert.ok(sh.includes("chmod --reference"), "镜像保留正本执行位");
   // 2c) pig 可选工人线路映射（cond 语义）：源/目标在表内，第三段条件目录非空，
   //     未装 pig 时走 skip（父目录不存在）而非 exit 2 —— 见下方 selfTest (h) 动态验证。
   const pigLine = sh
@@ -178,18 +208,32 @@ function assertContract() {
     !readme.includes("cp mana/extensions/pi/*.ts"),
     "README 不再手写工人侧扩展 cp 列表",
   );
-  assert.ok(readme.includes("`scripts/*`"), "README 脚本清单注明 scripts glob");
+  assert.ok(readme.includes("`scripts/**`"), "README 脚本清单注明 scripts 目录镜像");
+  assert.ok(readme.includes("`extensions/**`"), "README 扩展清单注明 extensions 目录镜像");
+  assert.ok(readme.includes("`checks/**`"), "README 契约清单注明 checks 目录镜像");
+  assert.ok(readme.includes("`docs/**`"), "README 文档清单注明 docs 目录镜像");
   assert.ok(readme.includes("~/.omp/agent/skills/mana/scripts/"), "README 明示全局脚本目标目录");
-  assert.ok(readme.includes("目标仓不再复制脚本"), "README 移除目标仓脚本复制步骤");
+  assert.ok(readme.includes("MANA_SRC") && readme.includes("MANA_REPO"), "README 说明源与目标仓环境变量");
+  assert.ok(readme.includes("镜像集明确排除 `.gitignore`"), "README 明示镜像排除项");
   const scriptsSection = skill.split("### 全局装机前置与仓库前置条件")[1]?.split("### ")[0] ?? "";
   assert.ok(scriptsSection.includes("~/.omp/agent/skills/mana/scripts/mana-run-lock.py"), "SKILL 前置指向全局 run-lock");
   assert.ok(scriptsSection.includes("~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py"), "SKILL 前置指向全局 grant guard");
+  assert.ok(scriptsSection.includes("MANA_SRC") && scriptsSection.includes("MANA_REPO"), "SKILL 说明源与目标仓环境变量");
   console.log(
-    "✓ 装机脚本契约断言通过（cmp -s 口径/四类映射/幂等/不碰配置/四红旗/README 引用）",
+    "✓ 装机脚本契约断言通过（真实镜像集/README 表/cmp -s/幂等/不碰配置/四红旗）",
   );
 }
 
 function selfTest() {
+  const readme = readFileSync(join(REPO, "README.md"), "utf8");
+  const mappingNeedle = "MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)";
+  const mappingDrill = script().replace(mappingNeedle, "MIRROR_SOURCES=(skills/mana scripts extensions docs README.md AGENTS.md LICENSE)");
+  assert.throws(() => assertMirrorCoverage({ sourceText: mappingDrill, readmeText: readme }), /装机映射覆盖正本跟踪集/);
+  console.log("  ✓ 负例(a)：删除 MIRROR_SOURCES 的 checks → 映射覆盖断言实测失败");
+  const readmeDrill = readme.replace(/^\| `checks\/\*\*` \|.*$/m, "");
+  assert.throws(() => assertMirrorCoverage({ sourceText: script(), readmeText: readmeDrill }), /README 装机表覆盖正本跟踪集/);
+  console.log("  ✓ 负例(b)：删除 README 的 checks 表行 → README 覆盖断言实测失败");
+
   const home = mkdtempSync(join(tmpdir(), "mana-install-drill-"));
   const env = { HOME: home };
   try {
@@ -202,6 +246,15 @@ function selfTest() {
     assert.equal(r.code, 0, "安装 exit 0");
     r = run(["--check"], env);
     assert.equal(r.code, 0, `安装后 --check 为 0（实际: ${r.out}）`);
+    assert.ok(
+      existsSync(join(home, ".omp/agent/skills/mana/SKILL.md")),
+      "SKILL.md 直接落在全局 mana skill 根目录",
+    );
+    assert.ok(
+      !existsSync(join(home, ".omp/agent/skills/mana/skills")),
+      "全局 mana skill 根目录不重复嵌套 skills/",
+    );
+    console.log("  ✓ 主镜像路径：SKILL.md 落根，skills/ 重复目录不存在");
     // (c) 幂等：重跑安装，mtime 不变
     const targets = [
       join(home, ".omp/agent/skills/mana/SKILL.md"),

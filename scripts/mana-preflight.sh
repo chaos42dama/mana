@@ -12,7 +12,7 @@ OK()   { echo "ok: $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# MANA_SRC 指向含 extensions/ 的正本仓；自动探测 canonical git common-dir 后退回全局 skill。
+# 源优先级：MANA_SRC → 当前仓 git-common-dir 候选 → 完整全局镜像目录。
 if [ -n "${MANA_SRC:-}" ]; then
   SOURCE_ROOT="$(cd "$MANA_SRC" 2>/dev/null && pwd)" || FAIL "源解析门: MANA_SRC 不存在：$MANA_SRC"
 else
@@ -21,7 +21,7 @@ else
   if [ -n "$_repo_root" ]; then
     _git_common="$(git -C "$_repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
     for _candidate in "$(dirname "$_git_common")" "$_repo_root"; do
-      if [ -f "$_candidate/extensions/pi/mana-worker.ts" ]; then
+      if [ -d "$_candidate/extensions" ] && [ -d "$_candidate/checks" ]; then
         SOURCE_ROOT="$_candidate"
         break
       fi
@@ -48,8 +48,15 @@ for _source_file in "${SOURCE_FILES[@]}"; do
     break
   fi
 done
+HAS_FULL_SOURCE=0
+if [ -d "$SOURCE_ROOT/extensions" ] && [ -d "$SOURCE_ROOT/checks" ]; then
+  HAS_FULL_SOURCE=1
+fi
 if [ "$HAS_EXTENSION_SOURCE" -eq 0 ]; then
   WARN "装机门: 未找到扩展正本源（$SOURCE_ROOT），跳过源码 cmp；将检查已安装扩展并运行其自检"
+fi
+if [ "$HAS_FULL_SOURCE" -eq 0 ]; then
+  WARN "自检门: 镜像不完整（$SOURCE_ROOT 缺 extensions/ 或 checks/），降级为已安装扩展自检"
 fi
 
 # run-state 始终属于运行中的目标仓，不随全局脚本安装位置变化。
@@ -187,7 +194,7 @@ SELFTESTS=(
   "PI_MANA_WORKER_COMPACT_SELFTEST=1 bun '$_pi_source/mana-worker-compact.ts'"
   "MANA_COMPACT_SELFTEST=1 bun '$_omp_source/mana-compact.ts'"
 )
-if [ -f "$SOURCE_ROOT/checks/all.check.mjs" ] && [ -f "$SOURCE_ROOT/scripts/mana-selftest.sh" ]; then
+if [ "$HAS_FULL_SOURCE" -eq 1 ] && [ -f "$SOURCE_ROOT/checks/all.check.mjs" ] && [ -f "$SOURCE_ROOT/scripts/mana-selftest.sh" ]; then
   SELFTESTS+=("bash '$SOURCE_ROOT/scripts/mana-selftest.sh' --quick --force-contracts")
 else
   SELFTESTS+=("python3 '$SCRIPT_DIR/check-mana-grant-scope.py' --self-test")
