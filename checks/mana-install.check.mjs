@@ -231,8 +231,10 @@ function selfTest() {
     assert.equal(r.code, 0, "--help → 0");
     const dryHome = mkdtempSync(join(tmpdir(), "mana-install-dry-"));
     r = run(["--dry-run"], { HOME: dryHome });
-    assert.equal(r.code, 0, "未安装的 --dry-run 仅报告待安装漂移");
+    assert.equal(r.code, 1, "未安装的 --dry-run 有漂移则 exit 1");
     assert.ok(r.out.includes(".omp/agent/skills/mana/scripts/mana-preflight.sh"), "--dry-run 列出全局脚本目标");
+    r = run(["--dry-run"], env);
+    assert.equal(r.code, 0, "已安装的 --dry-run 无漂移则 exit 0");
     rmSync(dryHome, { recursive: true, force: true });
     console.log(
       "✓ 合成 drill 通过：缺失/落后 → --check 非 0；安装后 → 0；重跑 mtime 不变；错参非 0",
