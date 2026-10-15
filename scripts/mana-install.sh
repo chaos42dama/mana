@@ -15,8 +15,7 @@
 #   bash scripts/mana-install.sh --dry-run    # 打印将执行的动作，不写；有漂移则 exit 1
 #   bash scripts/mana-install.sh --help
 #
-# 只复制下表列出的文件（skills/mana/references/*.md 与 scripts/* 按 glob 展开：新增
-# references 或脚本自动纳入装机比对，不把文件名写死在表里）；绝不触碰
+# 只镜像下方目录与文件（新增文件自动纳入）；绝不触碰
 # settings.json / models.json / auth.json / ~/.omp/agent/config.yml 等配置与密钥。
 set -euo pipefail
 
@@ -52,10 +51,24 @@ done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOME_DIR="${HOME:?HOME 未设置}"
 
-# 源 → 目标映射表（相对 REPO_ROOT 的源；目标为绝对路径）
-# 格式：<源相对路径>|<目标绝对路径>|<可选条件目录：该目录存在才安装/比对>
-MAPPINGS=(
-  "skills/mana/SKILL.md|$HOME_DIR/.omp/agent/skills/mana/SKILL.md|"
+# 主镜像目录按 glob 展开；映射表本身即 README 的机器可读实现。
+# 格式：<源相对路径>|<目标绝对路径>|<可选条件目录>
+MAPPINGS=()
+MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)
+for _source in "${MIRROR_SOURCES[@]}"; do
+  if [ -d "$REPO_ROOT/$_source" ]; then
+    while IFS= read -r -d '' _file; do
+      _rel="${_file#"$REPO_ROOT/"}"
+      _target_rel="${_rel#skills/mana/}"
+      MAPPINGS+=("$_rel|$HOME_DIR/.omp/agent/skills/mana/$_target_rel|")
+    done < <(find "$REPO_ROOT/$_source" -type f -print0 | sort -z)
+  else
+    MAPPINGS+=("$_source|$HOME_DIR/.omp/agent/skills/mana/$_source|")
+  fi
+done
+
+# 既有接线目录保持不变；可选目录不存在时跳过。
+MAPPINGS+=(
   "skills/mana/SKILL.md|$HOME_DIR/.agents/skills/mana/SKILL.md|$HOME_DIR/.agents/skills"
   "extensions/pi/mana-worker.ts|$HOME_DIR/.pi/agent/extensions/mana-worker.ts|"
   "extensions/pi/mana-worker-compact.ts|$HOME_DIR/.pi/agent/extensions/mana-worker-compact.ts|"
@@ -63,23 +76,8 @@ MAPPINGS=(
   "extensions/pi/safe-guard.ts|$HOME_DIR/.pi/agent/extensions/safe-guard.ts|"
   "extensions/safe-guard.ts|$HOME_DIR/.omp/agent/extensions/safe-guard.ts|"
   "extensions/mana-compact.ts|$HOME_DIR/.omp/agent/extensions/mana-compact.ts|"
-  # pig 是可选工人线路：未装 pig 的机器没有 ~/.pig/agent/extensions，
-  # 用 cond 语义（父目录存在才安装/比对）跳过而非报错（否则未装 pig 机器 exit 2）。
   "extensions/pig/herdr-agent-state.ts|$HOME_DIR/.pig/agent/extensions/herdr-agent-state.ts|$HOME_DIR/.pig/agent/extensions"
 )
-
-# references 目录走 glob 展开（#59）：仓库正本目录就是清单，
-# 新增 references 文件自动逐文件比对，无需改本脚本。
-for _ref in "$REPO_ROOT"/skills/mana/references/*.md; do
-  [ -e "$_ref" ] || continue
-  MAPPINGS+=("skills/mana/references/$(basename "$_ref")|$HOME_DIR/.omp/agent/skills/mana/references/$(basename "$_ref")|")
-done
-
-# scripts 目录即清单：新增脚本自动纳入全局 skill 安装与比对。
-for _script in "$REPO_ROOT"/scripts/*; do
-  [ -f "$_script" ] || continue
-  MAPPINGS+=("scripts/$(basename "$_script")|$HOME_DIR/.omp/agent/skills/mana/scripts/$(basename "$_script")|")
-done
 
 hash_of() { sha256sum "$1" 2>/dev/null | cut -c1-12; }
 
@@ -97,7 +95,7 @@ for entry in "${MAPPINGS[@]}"; do
     continue
   fi
   if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
-    if [ "$mode" = install ] && [[ "$src_rel" == scripts/* ]]; then chmod --reference="$src" "$dst"; fi
+    if [ "$mode" = install ]; then chmod --reference="$src" "$dst"; fi
     printf '%-46s %-14s %-14s %s\n' "$dst" "$(hash_of "$src")" "$(hash_of "$dst")" 'ok'
     continue
   fi
@@ -116,7 +114,7 @@ for entry in "${MAPPINGS[@]}"; do
   install)
     mkdir -p "$(dirname "$dst")"
     cp "$src" "$dst"
-    if [[ "$src_rel" == scripts/* ]]; then chmod --reference="$src" "$dst"; fi
+    chmod --reference="$src" "$dst"
     printf '%-46s %-14s %-14s %s\n' "$dst" "$(hash_of "$src")" "$(hash_of "$dst")" '已安装'
     ;;
   esac
