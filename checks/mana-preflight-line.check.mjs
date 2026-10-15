@@ -30,9 +30,10 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-const SCRATCH = join(REPO, ".tmp-preflight-line-check");
+const SCRATCH = join(tmpdir(), `mana-preflight-line-check-${process.pid}`);
 const FAKE_DEFAULT_LINE = "anthropic/claude-x"; // 镜像场景用的假默认线（与镜像 state 基线不同）
 const MIRROR_STATE_LINE = "openai/gpt-old"; // 镜像 .mana state.json 里的旧基线（drift 源）
 
@@ -55,6 +56,7 @@ function setupEnv(line) {
   const home = join(SCRATCH, "home");
   const bin = join(SCRATCH, "bin");
   for (const d of [
+    join(home, ".omp/agent/skills/mana/scripts"),
     join(home, ".pi/agent/extensions"),
     join(home, ".omp/agent/extensions"),
     bin,
@@ -70,6 +72,7 @@ function setupEnv(line) {
     cpSync(join(REPO, "extensions/pi", f), join(home, ".pi/agent/extensions", f));
   for (const f of ["mana-compact.ts", "safe-guard.ts"])
     cpSync(join(REPO, "extensions", f), join(home, ".omp/agent/extensions", f));
+  cpSync(join(REPO, "scripts/check-mana-grant-scope.py"), join(home, ".omp/agent/skills/mana/scripts/check-mana-grant-scope.py"));
 
   const fakes = {
     herdr: '#!/usr/bin/env bash\necho "status: running"\n',
@@ -110,13 +113,14 @@ function buildPath(bin) {
   return [bin, ...realDirs.filter((d) => d !== realPigDir && d !== "")].join(":");
 }
 
-function runPreflight(bin, home, { cwd = REPO, line = FAKE_DEFAULT_LINE, env: extraEnv = {} } = {}) {
-  const r = spawnSync("bash", [join(cwd, "scripts/mana-preflight.sh")], {
+function runPreflight(bin, home, { cwd = REPO, scriptPath = join(cwd, "scripts/mana-preflight.sh"), line = FAKE_DEFAULT_LINE, env: extraEnv = {} } = {}) {
+  const r = spawnSync("bash", [scriptPath], {
     cwd,
     encoding: "utf8",
     env: {
       ...process.env,
       HOME: home,
+      MANA_SRC: REPO,
       PATH: buildPath(bin),
       MANA_AUTONOMOUS: "1",
       HERDR_ENV: "1",
@@ -164,6 +168,30 @@ try {
     console.log("✓ 组1 healthy → rc=0，state=healthy drift=none，settings 只读未变");
   }
 
+  // 1b) 从沙箱全局 skill scripts 独立运行：无源码时 WARN 必须可见，继续自检已安装扩展并通过。
+  {
+    const { home, bin } = setupEnv(realBaseLine());
+    const globalScripts = join(home, ".omp/agent/skills/mana/scripts");
+    mkdirSync(globalScripts, { recursive: true });
+    cpSync(join(REPO, "scripts/mana-preflight.sh"), join(globalScripts, "mana-preflight.sh"));
+    const mirror = join(SCRATCH, "target-repo");
+    mkdirSync(mirror, { recursive: true });
+    const { rc, out } = runPreflight(bin, home, {
+      cwd: mirror,
+      scriptPath: join(globalScripts, "mana-preflight.sh"),
+      env: { MANA_SRC: "", MANA_REPO: mirror },
+    });
+    assert.equal(rc, 0, `沙箱全局脚本应可独立通过
+${out}`);
+    assert.ok(out.includes("PREFLIGHT WARN: 装机门: 未找到扩展正本源"), `源码缺失须显式 WARN
+${out}`);
+    assert.ok(out.includes("ok: 自检门: PI_MANA_WORKER_SELFTEST=1 bun"), `须运行已安装扩展自检
+${out}`);
+    assert.ok(out.includes("PREFLIGHT PASS"), `沙箱全局脚本应 PASS
+${out}`);
+    console.log("✓ 组1b 沙箱全局 skill 脚本独立运行，源码缺失 WARN 可见且已安装扩展自检通过");
+  }
+
   // 2) capacity：429/quota 文本 → FAIL 独立容量文案，非 0，不误判 unavailable
   {
     const { home, bin } = setupEnv(realBaseLine());
@@ -192,7 +220,7 @@ try {
     const mirror = makeMirror({ stateLine: MIRROR_STATE_LINE });
     const statePath = join(mirror, ".mana/run-drill/state.json");
     const before = readFileSync(statePath);
-    const { rc, out } = runPreflight(bin, home, { cwd: mirror, env: { MANA_RUN_ID: "run-drill" } });
+    const { rc, out } = runPreflight(bin, home, { cwd: mirror, env: { MANA_REPO: mirror, MANA_RUN_ID: "run-drill" } });
     assert.notEqual(rc, 0, `场景④ 应 FAIL\n${out}`);
     assert.ok(
       out.includes(`默认线漂移 drift（baseline=${MIRROR_STATE_LINE} 当前=${FAKE_DEFAULT_LINE}`),
@@ -206,7 +234,7 @@ try {
   {
     const { home, bin } = setupEnv(FAKE_DEFAULT_LINE);
     const mirror = makeMirror({ stateLine: MIRROR_STATE_LINE });
-    const { rc, out } = runPreflight(bin, home, { cwd: mirror, env: { MANA_RUN_ID: "" } });
+    const { out } = runPreflight(bin, home, { cwd: mirror, env: { MANA_RUN_ID: "", MANA_REPO: mirror } });
     assert.ok(out.includes("ok: 线路门: state=healthy drift=none"), `场景④b fresh 应有 drift=none 机读行\n${out}`);
     assert.ok(!out.includes("默认线漂移"), `场景④b fresh 不得触发漂移 FAIL 文案\n${out}`);
     console.log("✓ 组4b fresh（MANA_RUN_ID 空）→ 不扫描镜像 stale state，writer drift=none（线路门绿）");

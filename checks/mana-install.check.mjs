@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// 装机脚本契约自检（Issue #31；#59 起 references glob 展开）
-// 无参数：断言 scripts/mana-install.sh 存在且可执行、映射表覆盖四类目标 + references 目录 glob 展开、
+// 装机脚本契约自检（Issue #31；#59 起 references glob 展开；#1768 起 scripts glob）
+// 无参数：断言 scripts/mana-install.sh 存在且可执行、映射表覆盖目标目录 + references/scripts glob 展开、
 //         --check 判定用 cmp -s（与 scripts/mana-preflight.sh 装机门同口径）、不含对配置/密钥路径的写操作、
 //         SKILL.md intake 段含设计审查四红旗与 §13 承接声明、README 引用脚本且不再手写 cp 列表。
 // --self-test：合成 drill——在临时 HOME 下实跑脚本，验证「目标缺失/落后 → --check 非 0」
@@ -79,6 +79,14 @@ function assertContract() {
     !sh.includes("architect-rationale-template.md|") &&
       !sh.includes("architect-runner-prompt.md|"),
     "不得把 references 文件名硬编码进 MAPPINGS",
+  );
+  assert.ok(
+    sh.includes('for _script in "$REPO_ROOT"/scripts/*'),
+    "scripts 映射按 glob 展开",
+  );
+  assert.ok(
+    sh.includes('$HOME_DIR/.omp/agent/skills/mana/scripts/$(basename "$_script")'),
+    "所有 scripts 安装到全局 mana skill scripts 目录",
   );
   // 2c) pig 可选工人线路映射（cond 语义）：源/目标在表内，第三段条件目录非空，
   //     未装 pig 时走 skip（父目录不存在）而非 exit 2 —— 见下方 selfTest (h) 动态验证。
@@ -170,6 +178,12 @@ function assertContract() {
     !readme.includes("cp mana/extensions/pi/*.ts"),
     "README 不再手写工人侧扩展 cp 列表",
   );
+  assert.ok(readme.includes("`scripts/*`"), "README 脚本清单注明 scripts glob");
+  assert.ok(readme.includes("~/.omp/agent/skills/mana/scripts/"), "README 明示全局脚本目标目录");
+  assert.ok(readme.includes("目标仓不再复制脚本"), "README 移除目标仓脚本复制步骤");
+  const scriptsSection = skill.split("### 全局装机前置与仓库前置条件")[1]?.split("### ")[0] ?? "";
+  assert.ok(scriptsSection.includes("~/.omp/agent/skills/mana/scripts/mana-run-lock.py"), "SKILL 前置指向全局 run-lock");
+  assert.ok(scriptsSection.includes("~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py"), "SKILL 前置指向全局 grant guard");
   console.log(
     "✓ 装机脚本契约断言通过（cmp -s 口径/四类映射/幂等/不碰配置/四红旗/README 引用）",
   );
@@ -193,6 +207,9 @@ function selfTest() {
       join(home, ".omp/agent/skills/mana/SKILL.md"),
       join(home, ".pi/agent/extensions/mana-worker.ts"),
       join(home, ".omp/agent/extensions/mana-compact.ts"),
+      join(home, ".omp/agent/skills/mana/scripts/mana-preflight.sh"),
+      join(home, ".omp/agent/skills/mana/scripts/mana-run-lock.py"),
+      join(home, ".omp/agent/skills/mana/scripts/check-mana-grant-scope.py"),
     ];
     for (const t of targets) assert.ok(existsSync(t), `已安装 ${t}`);
     const before = targets.map((t) => statSync(t).mtimeMs);
@@ -212,6 +229,11 @@ function selfTest() {
     assert.notEqual(r.code, 0, "未知参数 → 非 0");
     r = run(["--help"], env);
     assert.equal(r.code, 0, "--help → 0");
+    const dryHome = mkdtempSync(join(tmpdir(), "mana-install-dry-"));
+    r = run(["--dry-run"], { HOME: dryHome });
+    assert.equal(r.code, 0, "未安装的 --dry-run 仅报告待安装漂移");
+    assert.ok(r.out.includes(".omp/agent/skills/mana/scripts/mana-preflight.sh"), "--dry-run 列出全局脚本目标");
+    rmSync(dryHome, { recursive: true, force: true });
     console.log(
       "✓ 合成 drill 通过：缺失/落后 → --check 非 0；安装后 → 0；重跑 mtime 不变；错参非 0",
     );
@@ -259,6 +281,30 @@ function selfTest() {
     r = run(["--check"], env);
     assert.equal(r.code, 0, "删探针重装后 --check 回 0");
     console.log("  ✓ 删探针并重装 → --check 回 0");
+    // scripts glob：落位应包含全部源脚本并保留可执行位，新增脚本应进入 --check 清单。
+    const scriptsDir = join(home, ".omp/agent/skills/mana/scripts");
+    for (const name of ["mana-preflight.sh", "mana-run-lock.py", "check-mana-grant-scope.py"]) {
+      assert.ok(existsSync(join(scriptsDir, name)), `${name} 已装机`);
+    }
+    for (const name of ["mana-preflight.sh", "mana-install.sh", "check-mana-grant-scope.py"]) {
+      assert.ok(statSync(join(scriptsDir, name)).mode & 0o111, `${name} 可执行位保留`);
+    }
+    const scriptProbe = join(REPO, "scripts/install-extra-probe.sh");
+    writeFileSync(scriptProbe, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    try {
+      r = run(["--check"], env);
+      assert.notEqual(r.code, 0, "新增 scripts 文件 → --check 非 0（glob 生效）");
+      r = run([], env);
+      assert.equal(r.code, 0, "新增 scripts 文件自动安装");
+      assert.ok(existsSync(join(scriptsDir, "install-extra-probe.sh")), "新增 scripts 文件已装机");
+      assert.ok(statSync(join(scriptsDir, "install-extra-probe.sh")).mode & 0o111, "新脚本可执行位保留");
+    } finally {
+      rmSync(scriptProbe, { force: true });
+      rmSync(join(scriptsDir, "install-extra-probe.sh"), { force: true });
+    }
+    run([], env);
+    r = run(["--check"], env);
+    assert.equal(r.code, 0, "删 scripts 探针重装后 --check 回 0");
     // (h) pig 可选线路（cond 语义）：无 ~/.pig → skip 且 exit 0；建目录后 → 落位且幂等。
     r = run([], env);
     assert.ok(

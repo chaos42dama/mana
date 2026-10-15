@@ -12,11 +12,11 @@
 # 用法:
 #   bash scripts/mana-install.sh              # 安装/修复（幂等：内容相同不写，不动 mtime）
 #   bash scripts/mana-install.sh --check      # 只比对不写；有漂移 exit 1
-#   bash scripts/mana-install.sh --dry-run    # 打印将执行的动作，不写；有漂移 exit 1
+#   bash scripts/mana-install.sh --dry-run    # 打印将执行的动作，不写；始终 exit 0
 #   bash scripts/mana-install.sh --help
 #
-# 只复制下表列出的文件（skills/mana/references/*.md 按 glob 展开，见 #59：新增
-# references 文件自动纳入装机比对，不把文件名写死在表里）；绝不触碰
+# 只复制下表列出的文件（skills/mana/references/*.md 与 scripts/* 按 glob 展开：新增
+# references 或脚本自动纳入装机比对，不把文件名写死在表里）；绝不触碰
 # settings.json / models.json / auth.json / ~/.omp/agent/config.yml 等配置与密钥。
 set -euo pipefail
 
@@ -25,7 +25,7 @@ usage() {
 Usage: bash scripts/mana-install.sh [--check|--dry-run|--help]
   (无参数)     安装：把仓库正本幂等同步到用户级目录（内容相同不写）
   --check      只比对不写；任一目标漂移则 exit 1
-  --dry-run    打印将要执行的动作但不写；有漂移则 exit 1
+  --dry-run    打印将要执行的动作但不写；始终 exit 0
   --help       显示本用法
 仓库正本 = 唯一事实源；用户级目录是安装产物。
 USAGE
@@ -75,6 +75,12 @@ for _ref in "$REPO_ROOT"/skills/mana/references/*.md; do
   MAPPINGS+=("skills/mana/references/$(basename "$_ref")|$HOME_DIR/.omp/agent/skills/mana/references/$(basename "$_ref")|")
 done
 
+# scripts 目录即清单：新增脚本自动纳入全局 skill 安装与比对。
+for _script in "$REPO_ROOT"/scripts/*; do
+  [ -f "$_script" ] || continue
+  MAPPINGS+=("scripts/$(basename "$_script")|$HOME_DIR/.omp/agent/skills/mana/scripts/$(basename "$_script")|")
+done
+
 hash_of() { sha256sum "$1" 2>/dev/null | cut -c1-12; }
 
 drift=0
@@ -91,6 +97,7 @@ for entry in "${MAPPINGS[@]}"; do
     continue
   fi
   if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+    if [ "$mode" = install ] && [[ "$src_rel" == scripts/* ]]; then chmod --reference="$src" "$dst"; fi
     printf '%-46s %-14s %-14s %s\n' "$dst" "$(hash_of "$src")" "$(hash_of "$dst")" 'ok'
     continue
   fi
@@ -109,6 +116,7 @@ for entry in "${MAPPINGS[@]}"; do
   install)
     mkdir -p "$(dirname "$dst")"
     cp "$src" "$dst"
+    if [[ "$src_rel" == scripts/* ]]; then chmod --reference="$src" "$dst"; fi
     printf '%-46s %-14s %-14s %s\n' "$dst" "$(hash_of "$src")" "$(hash_of "$dst")" '已安装'
     ;;
   esac
@@ -125,10 +133,10 @@ check)
   ;;
 dry-run)
   if [ "$drift" -ne 0 ]; then
-    echo "mana-install: [dry-run] 有漂移待安装（未写任何文件）" >&2
-    exit 1
+    echo "mana-install: [dry-run] 有漂移待安装（未写任何文件）"
+  else
+    echo "mana-install: [dry-run] 无漂移，无需安装"
   fi
-  echo "mana-install: [dry-run] 无漂移，无需安装"
   ;;
 install)
   echo "mana-install: 安装完成（幂等；内容未变的文件未重写）"

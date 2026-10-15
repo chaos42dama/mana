@@ -32,7 +32,7 @@ const GROUPS = [
     required: [
       "只读 Pi explorer lane",
       "互不重叠的切面",
-      "brief 用 `skills/mana/references/how-explorer-prompt.md`",
+      "brief 用 `~/.omp/agent/skills/mana/references/how-explorer-prompt.md`",
     ],
     negative(skill, label) {
       assert.ok(
@@ -79,7 +79,7 @@ const GROUPS = [
       "long-form docs = 仓库内文档与 session 记忆",
       "`codebase-memory` MCP 可用则单列一类",
       "**每个类别一条 lane，各管一个来源，不要让一条 lane cover 多个来源**",
-      "brief 用 `skills/mana/references/why-investigator-prompt.md`",
+      "brief 用 `~/.omp/agent/skills/mana/references/why-investigator-prompt.md`",
       "同时 running 的 investigator ≤ `max_parallel_lanes`",
     ],
   },
@@ -98,7 +98,7 @@ const GROUPS = [
       "有指向性证据但没直说",
       "推断，必须写出推断链",
       "查不到，明确说查不到",
-      "brief 用 `skills/mana/references/why-epistemics.md`",
+      "brief 用 `~/.omp/agent/skills/mana/references/why-epistemics.md`",
     ],
     negative(skill, label) {
       assert.ok(
@@ -231,8 +231,8 @@ function selfTest() {
   const full = [
     "context（不写业务代码）",
     "### context（不写业务代码；仅第 1/2/6/7 条 how/why/architect/prototype 可开只读 lane）",
-    "1. **how**：`/mana how <范围>` 以代码为证据；复杂度分流：范围含糊先说出自己的理解再查。**Simple**（单模块、小工具、窄问题如「函数 X 怎么工作」）→ **不派 lane**，一条只读 explainer 单程走完；**Complex**（跨多文件/多服务、cross-cutting、全局架构概览）→ 拆成 `min(2, max_parallel_lanes)` 个**互不重叠的切面**（同时 running 的 explorer ≤`max_parallel_lanes`，默认 2；预算为 1 时单条 explorer 走完 Complex），每条一个**只读 Pi explorer lane**（`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`、`herdr agent start <name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`，**不传 `--model`**），brief 用 `skills/mana/references/how-explorer-prompt.md`。explorer **只取证不写散文**：不要猜名字，要读代码；产出是证据集合。**合成**：senior onboarding 级心智模型——数据怎么流、归属与边界在哪、哪些是推测；**推测必须显式标成推测**。按 §0.8 回收并双 `not_found` 验证；不 push/merge/改 Issue；结论只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。",
-    "2. **why**：`/mana why <范围>` 用**谨慎的调查者**姿态。代码不携带动机——动机在 commit、PR、Issue、文档、对话里，不完整、有偏、常常缺失。**代码锚点先行**：派 investigator 前必须拿到文件路径与行区间、关键符号、初始 commit 列表、从 merge commit 里抽出的 PR 号（`git blame -L <start>,<end> <file>`、`git log --follow -p -- <file>`、`git log --oneline -20 -- <file>`、`git log -1 --format=%B <commit>` 抽 `(#1234)`、`gh pr view <n> --json title,body,author,createdAt,mergedAt,labels,closingIssuesReferences,comments,reviews`）；**没有锚点不派 lane**。**并行取证**：按**本机实际可用**的证据类别派 lane（source control = `git` + `gh`；issue tracker = `gh issue` / `gh pr`；long-form docs = 仓库内文档与 session 记忆；`codebase-memory` MCP 可用则单列一类）。**每个类别一条 lane，各管一个来源，不要让一条 lane cover 多个来源**，brief 用 `skills/mana/references/why-investigator-prompt.md`；同时 running 的 investigator ≤ `max_parallel_lanes`，类别多于预算就回收一条再派一条；查无证据要**写进缺口清单**（Document the null），不得跳过搜索。**合成**：由一条只读 synthesizer lane（回收完 investigator 后启动），brief 用 `skills/mana/references/why-epistemics.md`，按其四档输出——`direct`（有人**白纸黑字**写过为什么，如 PR 正文写「修的是用户有 >1000 条时无法分页」）、`supported`（有指向性证据但没直说）、`inference`（推断，必须写出推断链）、`unknown`（查不到，明确说查不到）；**每条结论要么带出处、要么带标签**，把 inference 写成 direct 属违规。lane 同样按 §0.8 回收并双 `not_found` 验证；**不传 `--model`**、不 push/merge/改 Issue。",
+    "1. **how**：`/mana how <范围>` 以代码为证据；复杂度分流：范围含糊先说出自己的理解再查。**Simple**（单模块、小工具、窄问题如「函数 X 怎么工作」）→ **不派 lane**，一条只读 explainer 单程走完；**Complex**（跨多文件/多服务、cross-cutting、全局架构概览）→ 拆成 `min(2, max_parallel_lanes)` 个**互不重叠的切面**（同时 running 的 explorer ≤`max_parallel_lanes`，默认 2；预算为 1 时单条 explorer 走完 Complex），每条一个**只读 Pi explorer lane**（`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`、`herdr agent start <name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`，**不传 `--model`**），brief 用 `~/.omp/agent/skills/mana/references/how-explorer-prompt.md`。explorer **只取证不写散文**：不要猜名字，要读代码；产出是证据集合。**合成**：senior onboarding 级心智模型——数据怎么流、归属与边界在哪、哪些是推测；**推测必须显式标成推测**。按 §0.8 回收并双 `not_found` 验证；不 push/merge/改 Issue；结论只在回复里给（结论 + 关键证据 + 来源），只有用户明确要存档时才写 `.mana/<context-id>/`。",
+    "2. **why**：`/mana why <范围>` 用**谨慎的调查者**姿态。代码不携带动机——动机在 commit、PR、Issue、文档、对话里，不完整、有偏、常常缺失。**代码锚点先行**：派 investigator 前必须拿到文件路径与行区间、关键符号、初始 commit 列表、从 merge commit 里抽出的 PR 号（`git blame -L <start>,<end> <file>`、`git log --follow -p -- <file>`、`git log --oneline -20 -- <file>`、`git log -1 --format=%B <commit>` 抽 `(#1234)`、`gh pr view <n> --json title,body,author,createdAt,mergedAt,labels,closingIssuesReferences,comments,reviews`）；**没有锚点不派 lane**。**并行取证**：按**本机实际可用**的证据类别派 lane（source control = `git` + `gh`；issue tracker = `gh issue` / `gh pr`；long-form docs = 仓库内文档与 session 记忆；`codebase-memory` MCP 可用则单列一类）。**每个类别一条 lane，各管一个来源，不要让一条 lane cover 多个来源**，brief 用 `~/.omp/agent/skills/mana/references/why-investigator-prompt.md`；同时 running 的 investigator ≤ `max_parallel_lanes`，类别多于预算就回收一条再派一条；查无证据要**写进缺口清单**（Document the null），不得跳过搜索。**合成**：由一条只读 synthesizer lane（回收完 investigator 后启动），brief 用 `~/.omp/agent/skills/mana/references/why-epistemics.md`，按其四档输出——`direct`（有人**白纸黑字**写过为什么，如 PR 正文写「修的是用户有 >1000 条时无法分页」）、`supported`（有指向性证据但没直说）、`inference`（推断，必须写出推断链）、`unknown`（查不到，明确说查不到）；**每条结论要么带出处、要么带标签**，把 inference 写成 direct 属违规。lane 同样按 §0.8 回收并双 `not_found` 验证；**不传 `--model`**、不 push/merge/改 Issue。",
     "8. context 是只读入口。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 6 条、prototype 第 7 条与 how/why 的只读取证 lane——第 1/2 条 Complex/并行取证路径——是仅有的四个显式例外）。",
   ].join("\n");
   assertContextContract(full, "合成完整版");
