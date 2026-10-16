@@ -69,7 +69,7 @@ bash scripts/mana-install.sh --check
 bash scripts/mana-install.sh --dry-run
 ```
 
-脚本按下表同步两组安装产物：**正本仓布局镜像**供仓内契约检查与全仓自检，**技能根落位**供 OMP 加载技能及其 references。两组都由同一正本映射生成，不手抄副本；`cmp -s` 判定，与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同口径；目录内新增文件自动纳入，脚本保留正本执行位。映射源集、完整目标集、此表及 `git ls-files` 正本跟踪集由 `checks/mana-install.check.mjs` 机械断言；镜像集明确排除 `.gitignore`。不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
+脚本按下表同步两组安装产物：**正本仓布局镜像**供仓内契约检查与全仓自检，**技能根落位**供 OMP 加载技能及其 references。两组都由同一正本映射生成，不手抄副本；`cmp -s` 判定，与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同口径；目录内新增文件自动纳入，脚本保留正本执行位。映射源集、完整目标集、此表及 `git ls-files` 正本跟踪集由 `checks/mana-install.check.mjs` 机械断言；镜像集明确排除 `.gitignore`。安装产物内可跑 `--quick`；其中跟踪集覆盖率子断言在非 git 上下文打印 WARN 并跳过，正本仓内全量强制。不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
 
 **正本仓布局镜像**（保留仓内相对路径）：
 

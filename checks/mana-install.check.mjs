@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 装机脚本契约自检（Issue #89）：映射、README 表、正本跟踪集必须相等。
+// 装机脚本契约自检（Issue #89）：映射、README 表必须相等；git 内另校验正本跟踪集。
 // --self-test 另实跑沙箱装机、幂等、条件接线，以及映射/README 各一组注入负例。
 import assert from "node:assert/strict";
 import {
@@ -89,30 +89,34 @@ function expandReadmeMappings(readmeText) {
   return { sources, targets };
 }
 
+function gitTrackedFiles() {
+  const sourceRoot = process.env.MANA_SRC || REPO;
+  const probe = execFileSync("git", ["-C", sourceRoot, "rev-parse", "--is-inside-work-tree"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+  assert.equal(probe, "true", "git 上下文探测结果");
+  return new Set(
+    execFileSync("git", ["-C", sourceRoot, "ls-files"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .trim()
+      .split("\n")
+      .filter((file) => file && !MIRROR_EXCLUDES.has(file)),
+  );
+}
+
 function assertMirrorCoverage({ sourceText = script(), readmeText = readFileSync(join(REPO, "README.md"), "utf8") } = {}) {
   const mirrorSources = parseShellSources(sourceText, "MIRROR_SOURCES");
   const skillRootSources = parseShellSources(sourceText, "SKILL_ROOT_SOURCES");
   const mirrorFiles = expandTrackedSources(mirrorSources);
   const skillRootFiles = expandTrackedSources(skillRootSources);
   const documented = expandReadmeMappings(readmeText);
-  let tracked;
-  try {
-    tracked = new Set(
-      execFileSync("git", ["-C", REPO, "ls-files"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-        .trim()
-        .split("\n")
-        .filter((file) => file && !MIRROR_EXCLUDES.has(file)),
-    );
-  } catch {
-    tracked = null;
-  }
   assert.deepEqual(
+    [...documented.sources].sort(),
     [...mirrorFiles].sort(),
-    [...(tracked ?? documented.sources)].sort(),
-    tracked ? "主镜像源覆盖正本跟踪集" : "主镜像源与 README 源集一致",
+    "README 装机表源集与映射覆盖集一致",
   );
 
   const targets = new Set([
@@ -127,14 +131,22 @@ function assertMirrorCoverage({ sourceText = script(), readmeText = readFileSync
       targets.add(fields[1].slice("$HOME_DIR/".length));
     }
   }
-
-  assert.deepEqual(
-    [...documented.sources].sort(),
-    [...(tracked ?? documented.sources)].sort(),
-    tracked ? "README 装机表覆盖正本跟踪集" : "README 源集自洽",
-  );
   assert.deepEqual([...documented.targets].sort(), [...targets].sort(), "README 装机表与映射目标集一致");
-  return (tracked ?? mirrorFiles).size;
+
+  let tracked;
+  try {
+    tracked = gitTrackedFiles();
+  } catch (error) {
+    const reason = error.code === "ENOENT" ? "git 命令不可用" : "当前路径及 MANA_SRC 非 git 工作树或 git rev-parse/ls-files 失败";
+    console.warn(`WARN：${reason}；该子断言已跳过，需在正本仓或 MANA_SRC 指向的仓内复验`);
+    return mirrorFiles.size;
+  }
+  assert.deepEqual(
+    [...mirrorFiles].sort(),
+    [...tracked].sort(),
+    "主镜像源覆盖正本跟踪集（排除 .gitignore）",
+  );
+  return tracked.size;
 }
 
 function assertContract() {
@@ -266,6 +278,7 @@ function assertContract() {
   assert.ok(readme.includes("~/.omp/agent/skills/mana/scripts/"), "README 明示全局脚本目标目录");
   assert.ok(readme.includes("MANA_SRC") && readme.includes("MANA_REPO"), "README 说明源与目标仓环境变量");
   assert.ok(readme.includes("镜像集明确排除 `.gitignore`"), "README 明示镜像排除项");
+  assert.ok(readme.includes("跟踪集覆盖率子断言在非 git 上下文打印 WARN 并跳过"), "README 明示安装产物内覆盖率跳过口径");
   const scriptsSection = skill.split("### 全局装机前置与仓库前置条件")[1]?.split("### ")[0] ?? "";
   assert.ok(scriptsSection.includes("~/.omp/agent/skills/mana/scripts/mana-run-lock.py"), "SKILL 前置指向全局 run-lock");
   assert.ok(scriptsSection.includes("~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py"), "SKILL 前置指向全局 grant guard");
