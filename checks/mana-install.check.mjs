@@ -61,34 +61,80 @@ function expandTrackedSources(sources) {
   return files;
 }
 
-function parseMirrorSources(sourceText) {
-  const match = sourceText.match(/MIRROR_SOURCES=\(([^)]*)\)/);
-  assert.ok(match, "装机脚本声明 MIRROR_SOURCES");
-  return match[1].trim().split(/\s+/);
+function parseShellSources(sourceText, name) {
+  const start = sourceText.indexOf(`${name}=`);
+  assert.notEqual(start, -1, `装机脚本声明 ${name}`);
+  const open = sourceText.indexOf("(", start);
+  const end = sourceText.indexOf(")", open);
+  return sourceText.slice(open + 1, end).trim().split(/\s+/);
 }
 
-function parseReadmeSources(readmeText) {
-  const start = readmeText.indexOf("| 仓库正本 | 目标 |");
-  assert.notEqual(start, -1, "README 含仓库正本 → 目标表");
-  const end = readmeText.indexOf("\n\n", start);
-  const table = readmeText.slice(start, end === -1 ? undefined : end);
-  return [...table.matchAll(/^\| `([^`]+)` \|/gm)].map(([, source]) =>
-    source.endsWith("/**") ? source.slice(0, -3) : source,
-  );
+function expandReadmeMappings(readmeText) {
+  const rows = [...readmeText.matchAll(/^\| `([^`]+)` \| `([^`]+)`/gm)];
+  assert.ok(rows.length, "README 含安装映射表");
+  const sources = new Set();
+  const targets = new Set();
+  for (const [, source, target] of rows) {
+    const root = source.endsWith("/**") ? source.slice(0, -3) : source;
+    for (const file of expandTrackedSources([root])) {
+      sources.add(file);
+      const relative = file === root ? "" : file.slice(root.length + 1);
+      const destination = target.replace(/^~\//, "");
+      let mappedTarget = destination;
+      if (destination.endsWith("/**")) mappedTarget = `${destination.slice(0, -2)}${relative}`;
+      else if (destination.endsWith("/")) mappedTarget = `${destination}${relative}`;
+      targets.add(mappedTarget);
+    }
+  }
+  return { sources, targets };
 }
 
 function assertMirrorCoverage({ sourceText = script(), readmeText = readFileSync(join(REPO, "README.md"), "utf8") } = {}) {
-  const mapped = expandTrackedSources(parseMirrorSources(sourceText));
-  const documented = expandTrackedSources(parseReadmeSources(readmeText));
-  const tracked = new Set(
-    execFileSync("git", ["-C", REPO, "ls-files"], { encoding: "utf8" })
-      .trim()
-      .split("\n")
-      .filter((file) => file && !MIRROR_EXCLUDES.has(file)),
+  const mirrorSources = parseShellSources(sourceText, "MIRROR_SOURCES");
+  const skillRootSources = parseShellSources(sourceText, "SKILL_ROOT_SOURCES");
+  const mirrorFiles = expandTrackedSources(mirrorSources);
+  const skillRootFiles = expandTrackedSources(skillRootSources);
+  const documented = expandReadmeMappings(readmeText);
+  let tracked;
+  try {
+    tracked = new Set(
+      execFileSync("git", ["-C", REPO, "ls-files"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .trim()
+        .split("\n")
+        .filter((file) => file && !MIRROR_EXCLUDES.has(file)),
+    );
+  } catch {
+    tracked = null;
+  }
+  assert.deepEqual(
+    [...mirrorFiles].sort(),
+    [...(tracked ?? documented.sources)].sort(),
+    tracked ? "主镜像源覆盖正本跟踪集" : "主镜像源与 README 源集一致",
   );
-  assert.deepEqual([...mapped].sort(), [...tracked].sort(), "装机映射覆盖正本跟踪集");
-  assert.deepEqual([...documented].sort(), [...tracked].sort(), "README 装机表覆盖正本跟踪集");
-  return tracked.size;
+
+  const targets = new Set([
+    ...[...mirrorFiles].map((file) => `.omp/agent/skills/mana/${file}`),
+    ...[...skillRootFiles].map((file) => `.omp/agent/skills/mana/${file.slice("skills/mana/".length)}`),
+  ]);
+  const wiringStart = sourceText.indexOf("# 既有接线目录保持不变");
+  const wiring = sourceText.slice(wiringStart).split("MAPPINGS+=(")[1]?.split(")")[0] ?? "";
+  for (const line of wiring.split("\n")) {
+    const fields = line.trim().replace(/^\"|\"$/g, "").split("|");
+    if (fields[1]?.startsWith("$HOME_DIR/") && !fields[1].includes("$_rel")) {
+      targets.add(fields[1].slice("$HOME_DIR/".length));
+    }
+  }
+
+  assert.deepEqual(
+    [...documented.sources].sort(),
+    [...(tracked ?? documented.sources)].sort(),
+    tracked ? "README 装机表覆盖正本跟踪集" : "README 源集自洽",
+  );
+  assert.deepEqual([...documented.targets].sort(), [...targets].sort(), "README 装机表与映射目标集一致");
+  return (tracked ?? mirrorFiles).size;
 }
 
 function assertContract() {
@@ -99,12 +145,17 @@ function assertContract() {
     "用 cmp -s 逐文件比对（与 mana-preflight.sh 装机门同口径）",
   );
   // 2) 目录镜像来源与真实正本集合机械对齐
-  assert.equal(assertMirrorCoverage(), 47, "镜像集为 47 个跟踪文件（排除 .gitignore）");
-  assert.ok(sh.includes("MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)"), "映射按目录/文件 glob 展开");
+  assert.equal(assertMirrorCoverage(), 47, "正本仓布局覆盖 47 个跟踪文件（排除 .gitignore）");
+  assert.ok(sh.includes("MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)"), "正本仓布局按目录/文件 glob 展开");
+  assert.ok(sh.includes("SKILL_ROOT_SOURCES=(skills/mana/SKILL.md skills/mana/references)"), "技能根映射含入口与 references");
   assert.ok(sh.includes("skills/mana/SKILL.md"), "映射表含技能正本");
   assert.ok(
-    sh.includes(".omp/agent/skills/mana/SKILL.md"),
-    "技能 → ~/.omp/agent/skills/mana/",
+    sh.includes(".omp/agent/skills/mana/$_rel"),
+    "正本仓布局保留源相对路径",
+  );
+  assert.ok(
+    sh.includes("_target_rel"),
+    "技能入口与 references 另落技能根",
   );
   assert.ok(
     sh.includes(".agents/skills/mana/SKILL.md"),
@@ -228,10 +279,10 @@ function selfTest() {
   const readme = readFileSync(join(REPO, "README.md"), "utf8");
   const mappingNeedle = "MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)";
   const mappingDrill = script().replace(mappingNeedle, "MIRROR_SOURCES=(skills/mana scripts extensions docs README.md AGENTS.md LICENSE)");
-  assert.throws(() => assertMirrorCoverage({ sourceText: mappingDrill, readmeText: readme }), /装机映射覆盖正本跟踪集/);
+  assert.throws(() => assertMirrorCoverage({ sourceText: mappingDrill, readmeText: readme }));
   console.log("  ✓ 负例(a)：删除 MIRROR_SOURCES 的 checks → 映射覆盖断言实测失败");
   const readmeDrill = readme.replace(/^\| `checks\/\*\*` \|.*$/m, "");
-  assert.throws(() => assertMirrorCoverage({ sourceText: script(), readmeText: readmeDrill }), /README 装机表覆盖正本跟踪集/);
+  assert.throws(() => assertMirrorCoverage({ sourceText: script(), readmeText: readmeDrill }));
   console.log("  ✓ 负例(b)：删除 README 的 checks 表行 → README 覆盖断言实测失败");
 
   const home = mkdtempSync(join(tmpdir(), "mana-install-drill-"));
@@ -251,10 +302,18 @@ function selfTest() {
       "SKILL.md 直接落在全局 mana skill 根目录",
     );
     assert.ok(
-      !existsSync(join(home, ".omp/agent/skills/mana/skills")),
-      "全局 mana skill 根目录不重复嵌套 skills/",
+      existsSync(join(home, ".omp/agent/skills/mana/skills/mana/SKILL.md")),
+      "正本仓布局保留 skills/mana/SKILL.md",
     );
-    console.log("  ✓ 主镜像路径：SKILL.md 落根，skills/ 重复目录不存在");
+    assert.ok(
+      existsSync(join(home, ".omp/agent/skills/mana/skills/mana/references")),
+      "正本仓布局保留 skills/mana/references",
+    );
+    assert.ok(
+      existsSync(join(home, ".omp/agent/skills/mana/references")),
+      "技能根 references 单独落位",
+    );
+    console.log("  ✓ 正本仓布局与技能根落位均存在");
     // (c) 幂等：重跑安装，mtime 不变
     const targets = [
       join(home, ".omp/agent/skills/mana/SKILL.md"),
