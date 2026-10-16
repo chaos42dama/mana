@@ -11,7 +11,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 ## §0 不变量（违反即停）
 
-全局 skill 目录：`~/.omp/agent/skills/mana/`；全局脚本目录：`~/.omp/agent/skills/mana/scripts/`。`scripts/*` 随 SKILL.md 与 references 由 `bash scripts/mana-install.sh` 一并装机，仓内命令引用全局脚本绝对路径。
+全局 skill 目录：`~/.omp/agent/skills/mana/`；全局脚本目录：`~/.omp/agent/skills/mana/scripts/`。`bash scripts/mana-install.sh` 同步两份安装产物：仓内布局镜像至 `~/.omp/agent/skills/mana/skills/mana/`、`scripts/`、`checks/` 等原相对路径；技能加载所需 `SKILL.md` 与 `references/` 另落全局 skill 根。仓内命令引用全局脚本绝对路径。
 
 1. **state 是唯一事实源**。状态存 `<repo>/.mana/<run-id>/state.json`（`.git/info/exclude` 排除 `.mana/`）。每次监督 sweep 先重读，再原子重写。会话记忆不可信。
 2. **DONE 是 claim 不是 verdict**。工人报完成后，orchestrator 必须亲自重跑该 lane 的验收命令，通过才信。
@@ -59,7 +59,7 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
 ### 全局装机前置与仓库前置条件
 
-全局技能 ≠ 全局可 run。先由正本仓运行 `bash scripts/mana-install.sh`；完整指令集镜像到 `~/.omp/agent/skills/mana/`，两个必需脚本须已装入 `~/.omp/agent/skills/mana/scripts/`。预检源变量：`MANA_SRC` 指定扩展正本源，缺省解析顺序为显式 `MANA_SRC` → 当前仓 `git-common-dir` 候选 → 全局镜像目录；镜像同时含 `extensions/` 与 `checks/` 时，镜像目录就是默认源，无需设置 `MANA_SRC`，会跑全装机门与 `mana-selftest.sh --quick`。镜像不完整时保留可见 `WARN` 并降级为已安装扩展自检。`MANA_REPO` 指定 run-state 所属目标仓，缺省为当前工作目录的 git 根。再逐仓核对其余前置，缺项只走 context/intake：
+全局技能 ≠ 全局可 run。先由正本仓运行 `bash scripts/mana-install.sh`；完整指令集按仓内相对路径镜像，并将 `SKILL.md` 与 `references/` 另落 `~/.omp/agent/skills/mana/` 技能根；两个必需脚本须已装入 `~/.omp/agent/skills/mana/scripts/`。预检源变量：`MANA_SRC` 指定扩展正本源，缺省解析顺序为显式 `MANA_SRC` → 当前仓 `git-common-dir` 候选 → 全局镜像目录；镜像同时含 `extensions/` 与 `checks/` 时，镜像目录就是默认源，无需设置 `MANA_SRC`，会跑全装机门与 `mana-selftest.sh --quick`。镜像不完整时保留可见 `WARN` 并降级为已安装扩展自检。`MANA_REPO` 指定 run-state 所属目标仓，缺省为当前工作目录的 git 根。再逐仓核对其余前置，缺项只走 context/intake：
 
 1. `~/.omp/agent/skills/mana/scripts/mana-run-lock.py`：run 单 owner 持锁入口；`python3 ~/.omp/agent/skills/mana/scripts/test_mana_run_lock.py` 自检。
 2. `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py`：tier 守卫；`python3 ~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py --self-test` 须通过。

@@ -69,20 +69,42 @@ bash scripts/mana-install.sh --check
 bash scripts/mana-install.sh --dry-run
 ```
 
-脚本把下表按目录镜像到 `~/.omp/agent/skills/mana/`：`cmp -s` 判定，与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同口径；目录内新增文件自动纳入，脚本保留正本执行位。映射集合、此表、`git ls-files` 正本跟踪集三者由 `checks/mana-install.check.mjs` 机械断言相等。镜像集明确排除 `.gitignore`；不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
+脚本按下表同步两组安装产物：**正本仓布局镜像**供仓内契约检查与全仓自检，**技能根落位**供 OMP 加载技能及其 references。两组都由同一正本映射生成，不手抄副本；`cmp -s` 判定，与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同口径；目录内新增文件自动纳入，脚本保留正本执行位。映射源集、完整目标集、此表及 `git ls-files` 正本跟踪集由 `checks/mana-install.check.mjs` 机械断言；镜像集明确排除 `.gitignore`。不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
+
+**正本仓布局镜像**（保留仓内相对路径）：
 
 | 仓库正本 | 目标 |
 | --- | --- |
-| `skills/mana/**` | `~/.omp/agent/skills/mana/`（目录镜像） |
-| `scripts/**` | `~/.omp/agent/skills/mana/`（目录镜像；保留执行位） |
-| `extensions/**` | `~/.omp/agent/skills/mana/`（目录镜像） |
-| `checks/**` | `~/.omp/agent/skills/mana/`（目录镜像） |
-| `docs/**` | `~/.omp/agent/skills/mana/`（目录镜像） |
+| `skills/mana/**` | `~/.omp/agent/skills/mana/skills/mana/**` |
+| `scripts/**` | `~/.omp/agent/skills/mana/scripts/**` |
+| `extensions/**` | `~/.omp/agent/skills/mana/extensions/**` |
+| `checks/**` | `~/.omp/agent/skills/mana/checks/**` |
+| `docs/**` | `~/.omp/agent/skills/mana/docs/**` |
 | `README.md` | `~/.omp/agent/skills/mana/README.md` |
 | `AGENTS.md` | `~/.omp/agent/skills/mana/AGENTS.md` |
 | `LICENSE` | `~/.omp/agent/skills/mana/LICENSE` |
 
-既有接线目录不变：`~/.agents/skills/mana/SKILL.md`（父目录存在时）、`~/.pi/agent/extensions/`、`~/.omp/agent/extensions/`，以及 `~/.pig/agent/extensions/`（父目录存在时）。它们均从同一正本复制，不计入上述主镜像表。
+**技能根落位**（同一安装产物的额外目标）：
+
+| 仓库正本 | 目标 |
+| --- | --- |
+| `skills/mana/SKILL.md` | `~/.omp/agent/skills/mana/SKILL.md` |
+| `skills/mana/references/**` | `~/.omp/agent/skills/mana/references/**` |
+
+**既有接线目录**（同一安装产物）：
+
+| 仓库正本 | 目标 |
+| --- | --- |
+| `skills/mana/SKILL.md` | `~/.agents/skills/mana/SKILL.md`（父目录存在时） |
+| `extensions/pi/mana-worker.ts` | `~/.pi/agent/extensions/mana-worker.ts` |
+| `extensions/pi/mana-worker-compact.ts` | `~/.pi/agent/extensions/mana-worker-compact.ts` |
+| `extensions/pi/precommit-review.ts` | `~/.pi/agent/extensions/precommit-review.ts` |
+| `extensions/pi/safe-guard.ts` | `~/.pi/agent/extensions/safe-guard.ts` |
+| `extensions/safe-guard.ts` | `~/.omp/agent/extensions/safe-guard.ts` |
+| `extensions/mana-compact.ts` | `~/.omp/agent/extensions/mana-compact.ts` |
+| `extensions/pig/herdr-agent-state.ts` | `~/.pig/agent/extensions/herdr-agent-state.ts`（父目录存在时） |
+
+所有目标均由装机脚本从同一正本同步。
 
 **预检源与目标仓**：`MANA_SRC` 指定扩展正本源，缺省按 `MANA_SRC` → 当前仓 `git-common-dir` 候选 → 完整镜像目录解析；镜像同时含 `extensions/` 与 `checks/` 时，它就是默认源，无需设置 `MANA_SRC`，预检会跑全装机门与 `mana-selftest.sh --quick`。镜像不完整时保留可见 `WARN`，降级为已安装扩展自检。`MANA_REPO` 指定 run-state 所属目标仓，缺省解析当前工作目录的 git 根。
 

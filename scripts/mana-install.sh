@@ -51,11 +51,22 @@ done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOME_DIR="${HOME:?HOME 未设置}"
 
-# 主镜像目录按 glob 展开；映射表本身即 README 的机器可读实现。
+# 主镜像保留仓内相对路径；技能入口/references 另落在 OMP 技能根。
 # 格式：<源相对路径>|<目标绝对路径>|<可选条件目录>
 MAPPINGS=()
 MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)
+SKILL_ROOT_SOURCES=(skills/mana/SKILL.md skills/mana/references)
 for _source in "${MIRROR_SOURCES[@]}"; do
+  if [ -d "$REPO_ROOT/$_source" ]; then
+    while IFS= read -r -d '' _file; do
+      _rel="${_file#"$REPO_ROOT/"}"
+      MAPPINGS+=("$_rel|$HOME_DIR/.omp/agent/skills/mana/$_rel|")
+    done < <(find "$REPO_ROOT/$_source" -type f -print0 | sort -z)
+  else
+    MAPPINGS+=("$_source|$HOME_DIR/.omp/agent/skills/mana/$_source|")
+  fi
+done
+for _source in "${SKILL_ROOT_SOURCES[@]}"; do
   if [ -d "$REPO_ROOT/$_source" ]; then
     while IFS= read -r -d '' _file; do
       _rel="${_file#"$REPO_ROOT/"}"
@@ -63,7 +74,8 @@ for _source in "${MIRROR_SOURCES[@]}"; do
       MAPPINGS+=("$_rel|$HOME_DIR/.omp/agent/skills/mana/$_target_rel|")
     done < <(find "$REPO_ROOT/$_source" -type f -print0 | sort -z)
   else
-    MAPPINGS+=("$_source|$HOME_DIR/.omp/agent/skills/mana/$_source|")
+    _target_rel="${_source#skills/mana/}"
+    MAPPINGS+=("$_source|$HOME_DIR/.omp/agent/skills/mana/$_target_rel|")
   fi
 done
 
