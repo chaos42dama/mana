@@ -39,7 +39,16 @@ function run(args, env) {
   }
 }
 
-const MIRROR_EXCLUDES = new Set([".gitignore"]);
+// 运行时产物不属装机集；镜像自检不会因它们改变覆盖率。
+const MIRROR_EXCLUDES = new Set([".gitignore", ".pytest_cache", "__pycache__", ".DS_Store"]);
+const MIRROR_EXCLUDE_SUFFIXES = [".pyc"];
+
+function isMirrorRuntimeArtifact(relativePath) {
+  return relativePath
+    .split("/")
+    .some((part) => MIRROR_EXCLUDES.has(part)) ||
+    MIRROR_EXCLUDE_SUFFIXES.some((suffix) => relativePath.endsWith(suffix));
+}
 
 function expandTrackedSources(sources) {
   const files = new Set();
@@ -53,7 +62,7 @@ function expandTrackedSources(sources) {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const rel = `${prefix}/${entry.name}`;
         if (entry.isDirectory()) walk(join(dir, entry.name), rel);
-        else if (entry.isFile()) files.add(rel);
+        else if (entry.isFile() && !isMirrorRuntimeArtifact(rel)) files.add(rel);
       }
     };
     walk(path, source);
@@ -157,7 +166,11 @@ function assertContract() {
     "用 cmp -s 逐文件比对（与 mana-preflight.sh 装机门同口径）",
   );
   // 2) 目录镜像来源与真实正本集合机械对齐
-  assert.equal(assertMirrorCoverage(), 47, "正本仓布局覆盖 47 个跟踪文件（排除 .gitignore）");
+  assert.equal(
+    assertMirrorCoverage(),
+    expandReadmeMappings(readFileSync(join(REPO, "README.md"), "utf8")).sources.size,
+    "正本仓布局覆盖 README 装机表声明的全部跟踪文件",
+  );
   assert.ok(sh.includes("MIRROR_SOURCES=(skills/mana scripts extensions checks docs README.md AGENTS.md LICENSE)"), "正本仓布局按目录/文件 glob 展开");
   assert.ok(sh.includes("SKILL_ROOT_SOURCES=(skills/mana/SKILL.md skills/mana/references)"), "技能根映射含入口与 references");
   assert.ok(sh.includes("skills/mana/SKILL.md"), "映射表含技能正本");
