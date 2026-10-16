@@ -104,6 +104,7 @@ for e in "${STEPS[@]}"; do
   OUT="$(mktemp)"
   if (cd "$REPO_ROOT" && env -u MANA_WORKER bash -c "$cmd") >"$OUT" 2>&1; then
     echo "✓ $name"
+    grep -E 'WARN(：|:)' "$OUT" || true
   else
     FAILED=1
     echo "✗ $name（输出末尾 10 行：）"

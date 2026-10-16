@@ -60,6 +60,9 @@ for (const { file, label, extraArgs } of items) {
   });
   if (r.status === 0) {
     console.log(`✓ ${name}`);
+    for (const line of `${r.stdout ?? ""}${r.stderr ?? ""}`.split("\n")) {
+      if (/^WARN(?:：|:)/.test(line)) console.log(`    ${line}`);
+    }
     continue;
   }
   failed++;
