@@ -28,9 +28,12 @@ FULL_BODY = "\n".join(
 )
 
 
-def run(body: str) -> subprocess.CompletedProcess:
+def run(body: str, extra_args: list[str] | None = None) -> subprocess.CompletedProcess:
+    cmd = [sys.executable, str(SCRIPT), "--body", "-"]
+    if extra_args:
+        cmd.extend(extra_args)
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--body", "-"],
+        cmd,
         input=body, capture_output=True, text=True, timeout=10, check=False,
     )
 
@@ -70,6 +73,30 @@ class CheckManaIssueTest(unittest.TestCase):
         out = result.stdout + result.stderr
         for name in ("Depends on", "Files", "Build", "Verify", "Review gate", "Merge"):
             self.assertIn(name, out)
+
+    def test_multi_lane_requires_shared_contracts_and_ownership(self):
+        multi_body = FULL_BODY + "\n- lane-a 与 lane-b 并行执行\n"
+        res_missing = run(multi_body)
+        self.assertNotEqual(res_missing.returncode, 0)
+        self.assertIn("Shared contracts", res_missing.stdout)
+        self.assertIn("Ownership", res_missing.stdout)
+
+        multi_ok = (
+            multi_body
+            + "## Shared contracts\n- 无跨 lane 可变接口\n"
+            + "## Ownership\n- lane-a: scripts/a.py\n- lane-b: scripts/b.py\n"
+        )
+        res_ok = run(multi_ok)
+        self.assertEqual(res_ok.returncode, 0, res_ok.stdout + res_ok.stderr)
+
+        multi_conflict = (
+            multi_body
+            + "## Shared contracts\n- 无\n"
+            + "## Ownership\n- lane-a: scripts/a.py\n- lane-b: scripts/a.py\n"
+        )
+        res_conflict = run(multi_conflict)
+        self.assertNotEqual(res_conflict.returncode, 0)
+        self.assertIn("双写冲突", res_conflict.stdout)
 
 
 if __name__ == "__main__":

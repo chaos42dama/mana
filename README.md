@@ -246,6 +246,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 - `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py` — tier 守卫（`--self-test` / `--paths` 预测 / `--base+--allow-key` 复核）
 - `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` — run 预检（环境/pi 解析/线路/装机/配置/扩展自检）
 - `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` — 心跳兜底（可 crontab 定时唤醒 sweep）
+- `~/.omp/agent/skills/mana/scripts/echo-discussion-sink.py` — `41490/ipi` Discussions `echo` 分类步进盖楼器与会话 JSONL 旁路蒸馏（方案 A 粒度，`MANA_ECHO_LIVE=1` 门控线上写入，未设时仅更新本地 `echo-state.json`）
 - `scripts/mana-install.sh` — 正本仓安装器（同步技能、references 与全局脚本）
 - `~/.omp/agent/skills/mana/scripts/mana-selftest.sh` — 全仓自检（`--quick` 为预检 d 门回归面）
 - `~/.omp/agent/skills/mana/scripts/check-mana-issue.py` — intake Issue 骨架校验（`exit 0` 才可授权）
@@ -255,10 +256,12 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 - `MANA_AUTONOMOUS=1` — 编排者自主模式（safe-guard 跳过危险确认，改为 notify）
 - `MANA_WORKER=1` — 工人模式（提问 block、危险 bash 只告警、review 整门关闭）
+- `MANA_ECHO_LIVE=1` — 开启 `echo-discussion-sink.py` 线上写入 `41490/ipi` `echo` 讨论分类（默认未设时仅 dry-run 更新本地 `echo-state.json`）
+- `MANA_LANE_ALLOW_PATHS` — 工人 lane 允许写入的路径 glob/前缀白名单（`mana-worker.ts` 事前拦截越界 `write/edit`）
 
 ### 关键扩展（`extensions/pi/`）
 
-- `mana-worker.ts` — 工人提问工具 block + 自决指令回灌
+- `mana-worker.ts` — 工人提问工具 block + 自决指令回灌 + 连续 3 次报错反射提示注入 + 连续 6 次 `stalled_loop` 断路器 + `MANA_LANE_ALLOW_PATHS` 写越界事前拦截 + `lanes/<lane-id>.events.jsonl` 旁路蒸馏
 - `safe-guard.ts` — 危险 bash 只 notify；受保护路径硬 block
 - `precommit-review.ts` — 整门关闭（工人 pane 无人类，`/review` 会死锁）
 - `mana-worker-compact.ts` — 工人侧 compaction 接管（协议块+原始 brief+上次摘要写进压缩结果）

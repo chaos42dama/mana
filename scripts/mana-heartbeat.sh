@@ -92,6 +92,9 @@ repo_hash() {
   printf '%s' "$1" | sha256sum | cut -c1-16
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ECHO_SINK="$SCRIPT_DIR/echo-discussion-sink.py"
+
 sweep_repo() {
   local repo=$1 lock_file state_file run_dir run_id agent observed lanes_ok
   [[ -d "$repo/.mana" ]] || return 0
@@ -109,6 +112,10 @@ sweep_repo() {
     if ! jq -e '.lanes | type == "array" and length > 0' "$state_file" >/dev/null 2>&1; then
       log_line "$repo" "$run_id" "-" "invalid" "skip"
       continue
+    fi
+    # 旁路同步 41490/ipi echo 讨论帖与会话 JSONL 蒸馏（MANA_ECHO_LIVE=1 时写线上，否则维护本地 echo-state.json；绝不阻断主流程）
+    if [[ -f "$ECHO_SINK" ]]; then
+      python3 "$ECHO_SINK" --sync-mana "$run_dir" >/dev/null 2>&1 || log_line "$repo" "$run_id" "-" "echo-warn" "echo-sync-failed"
     fi
     agent=$(jq -r '.orchestrator.agent_name // empty' "$state_file" 2>/dev/null || true)
     if [[ -z "$agent" ]]; then

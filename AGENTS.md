@@ -38,4 +38,7 @@
 | 默认线漂移（settings 默认线 ≠ run `state.worker_model`；run 期间默认线不得切换） | `scripts/mana-preflight.sh` 线路门（三态冒烟 healthy/capacity/unavailable + drift FAIL，fail-closed，只读）+ `checks/mana-preflight-line.check.mjs`（四场景 + `--self-test` 负例：删容量信号/删 drift 判定必须失败） | #73 |
 | `/mana veri` 契约漂移（三口/canonical/写界/五步/六节/账本四键/命令含 `--model` 等被删改） | `checks/mana-veri-contract.check.mjs`（无参断言 SKILL.md veri 条目 + 两份 references；`--self-test` 负例：删「cleanup 后证据仍在」/命令模板插 `--model` 必须失败） | run-79-veri-init-20261013 |
 
+| `echo` 讨论步进盖楼与 `MANA_ECHO_LIVE=1` 门控（方案 A 粒度、非阻断降级、`decisions.tsv` 与会话 JSONL 蒸馏） | `scripts/echo-discussion-sink.py` + `scripts/mana-heartbeat.sh` + `checks/mana-echo-sink.check.mjs`（无参契约断言 + `--self-test` 合成 drill 与负例） | ipi#224 |
+| 执行期黑盒与死循环/越界写（连续 3 次报错反射、连续 6 次 `stalled_loop`、`MANA_LANE_ALLOW_PATHS` 事前拦截、多 lane 共享契约与 handoff） | `extensions/pi/mana-worker.ts` + `scripts/check-mana-issue.py` + `checks/mana-worker-reflex.check.mjs`（无参契约断言 + `--self-test` 合成 drill 与负例） | ipi#224 |
+
 新增检查请登记到本表（文件名 + 断言范围），防 drill 失传。
