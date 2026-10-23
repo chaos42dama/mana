@@ -500,23 +500,55 @@ def sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) -> list
         sink.data["title"] = title
         ops.append({"op": "createDiscussion", "title": title, "result": disc})
 
-    # 1) Lane 状态跃迁 -> 顶层 lane 锚点或二级回复 (方案 A)
+    # 1) Lane 状态跃迁 -> 顶层 lane 锚点或二级回复 (方案 A；running 期间工具轨迹增量静默原地刷新)
+    import time as _time
     for ln in lanes:
         lid = str(ln.get("id") or "?")
         lstatus = str(ln.get("status") or "planned")
         lattempt = int(ln.get("attempt") or 1)
         key = f"{lid}:{lstatus}:{lattempt}:{ln.get('head_sha') or ''}"
-        if sink.data["synced_lane_states"].get(lid) == key:
-            continue
-        sink.data["step_seq"] += 1
-        seq = sink.data["step_seq"]
+        ev_file = run_dir / "lanes" / f"{lid}.events.jsonl"
+        tool_trace = load_lane_tool_trace(ev_file)
         summary = (
             f"Lane `{lid}` 状态跃迁为 **`{lstatus}`** (attempt={lattempt}, "
             f"model=`{ln.get('model') or mana_state.get('worker_model') or '-'}`, "
             f"head_sha=`{ln.get('head_sha') or '-'}`)"
         )
-        ev_file = run_dir / "lanes" / f"{lid}.events.jsonl"
-        tool_trace = load_lane_tool_trace(ev_file)
+        if sink.data["synced_lane_states"].get(lid) == key:
+            last_meta = (sink.data.get("lane_last_comments") or {}).get(lid) or {}
+            last_cid = last_meta.get("id")
+            last_seq = int(last_meta.get("seq") or sink.data["step_seq"] or 1)
+            last_tcount = int(last_meta.get("trace_count") or 0)
+            last_ts = float(last_meta.get("updated_at") or 0.0)
+            if (
+                last_cid
+                and lstatus in ("running", "verifying")
+                and len(tool_trace) != last_tcount
+                and (_time.time() - last_ts >= 15.0 or dry_run)
+            ):
+                body = format_step_comment(
+                    seq=last_seq,
+                    phase=f"lane:{lid}",
+                    title=f"{lid} -> {lstatus} (attempt {lattempt})",
+                    summary=summary,
+                    tool_trace=tool_trace or None,
+                    evidence=ln.get("acceptance_output") or ln.get("verdict"),
+                )
+                gh_graphql(
+                    MUTATION_UPDATE_COMMENT,
+                    {"commentId": last_cid, "body": body},
+                    dry_run=dry_run,
+                )
+                sink.data.setdefault("lane_last_comments", {})[lid] = {
+                    "id": last_cid,
+                    "seq": last_seq,
+                    "trace_count": len(tool_trace),
+                    "updated_at": _time.time(),
+                }
+                ops.append({"op": "updateDiscussionComment", "lane": lid, "seq": last_seq, "commentId": last_cid})
+            continue
+        sink.data["step_seq"] += 1
+        seq = sink.data["step_seq"]
         body = format_step_comment(
             seq=seq,
             phase=f"lane:{lid}",
@@ -541,6 +573,12 @@ def sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) -> list
         if not parent_id:
             sink.data["lane_Anchor_comments"][lid] = cnode["id"]
         sink.data["synced_lane_states"][lid] = key
+        sink.data.setdefault("lane_last_comments", {})[lid] = {
+            "id": cnode["id"],
+            "seq": seq,
+            "trace_count": len(tool_trace),
+            "updated_at": _time.time(),
+        }
         ops.append({"op": "addDiscussionComment", "lane": lid, "seq": seq, "replyToId": parent_id})
 
     # 2) decision_log 与 decisions.tsv 新增条目 -> 反射/决策回复
