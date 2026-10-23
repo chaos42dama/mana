@@ -30,7 +30,11 @@ if [[ ! -r $state ]]; then
   exit 3
 fi
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -f "$SCRIPT_DIR/echo-discussion-sink.py" ]]; then
+  python3 "$SCRIPT_DIR/echo-discussion-sink.py" --sync-mana "$run_dir" >/dev/null 2>&1 || true
+fi
 python3 - "$state" "$REPO_ROOT/AGENTS.md" "$as_json" <<'PYEOF'
 import json, sys
 from collections import Counter

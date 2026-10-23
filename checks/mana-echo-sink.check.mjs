@@ -41,6 +41,7 @@ function assertEchoContract({
   heartbeatText = readFileSync(join(REPO, "scripts/mana-heartbeat.sh"), "utf8"),
   skillText = readFileSync(join(REPO, "skills/mana/SKILL.md"), "utf8"),
   readmeText = readFileSync(join(REPO, "README.md"), "utf8"),
+  postmortemText = readFileSync(join(REPO, "scripts/mana-postmortem.sh"), "utf8"),
 } = {}) {
   for (const snippet of REQUIRED_SINK_SNIPPETS) {
     assert.ok(
@@ -56,6 +57,11 @@ function assertEchoContract({
   assert.ok(
     heartbeatText.includes("echo-sync-failed"),
     "scripts/mana-heartbeat.sh 须对 echo 同步失败做非阻断日志兜底",
+  );
+  assert.ok(
+    postmortemText.includes("echo-discussion-sink.py") &&
+      postmortemText.includes('--sync-mana "$run_dir"'),
+    "scripts/mana-postmortem.sh 须在复盘时顺带触发 echo-discussion-sink.py --sync-mana",
   );
   for (const snippet of [
     "echo-discussion-sink.py",
