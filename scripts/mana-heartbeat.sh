@@ -97,7 +97,6 @@ ECHO_SINK="$SCRIPT_DIR/echo-discussion-sink.py"
 
 sweep_repo() {
   local repo=$1 lock_file state_file run_dir run_id agent observed lanes_ok
-  [[ -d "$repo/.mana" ]] || return 0
   lock_file="/tmp/mana-heartbeat-$(repo_hash "$repo").lock"
   exec {lock_fd}>"$lock_file"
   if ! flock -n "$lock_fd"; then
@@ -108,7 +107,19 @@ sweep_repo() {
 
   if [[ -f "$ECHO_SINK" ]]; then
     nohup python3 "$ECHO_SINK" --watch-repo "$repo" >/dev/null 2>&1 </dev/null &
+    local _slug="--$(printf '%s' "$repo" | sed 's#^/##; s#/#-#g')--"
+    for _sess in "$HOME/.omp/agent/sessions/$_slug"/*.jsonl "$HOME/.pi/agent/sessions/$_slug"/*.jsonl; do
+      [[ -f "$_sess" ]] || continue
+      if [[ -n "$(find "$_sess" -mmin -120 2>/dev/null)" ]]; then
+        python3 "$ECHO_SINK" --sync-session "$_sess" --repo "$repo" >/dev/null 2>&1 || true
+      fi
+    done
   fi
+  [[ -d "$repo/.mana" ]] || {
+    flock -u "$lock_fd"
+    exec {lock_fd}>&-
+    return 0
+  }
   while IFS= read -r -d '' state_file; do
     run_dir=${state_file%/state.json}
     run_id=${run_dir##*/}

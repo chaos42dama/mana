@@ -34,6 +34,9 @@ const REQUIRED_SINK_SNIPPETS = [
   "distill_session_jsonl",
   "parse_decisions_tsv",
   "safe_sync_mana_run",
+  "sync_session",
+  "--sync-session",
+  "echo-sessions",
 ];
 
 function assertEchoContract({
@@ -205,8 +208,62 @@ function selfTest() {
       savedState.last_error?.includes("secondary rate limit"),
       "echo-state.json 须记录 last_error 供排查",
     );
+    // (c) Session 级反射演练：同一 session 复用同一 Discussion，/new 切换新 session_id 自动新建 Discussion
+    const sessA = join(scratch, "2026-10-23T02-25-17-001Z_01a16693-aaaa.jsonl");
+    writeFileSync(
+      sessA,
+      [
+        JSON.stringify({ type: "session", id: "01a16693-aaaa", cwd: scratch }),
+        JSON.stringify({
+          type: "message",
+          id: "u1",
+          message: { role: "user", content: [{ type: "text", text: "/mana recall #1518" }] },
+        }),
+      ].join("\n") + "\n",
+    );
+    const rsA1 = spawnSync(
+      "python3",
+      [join(REPO, "scripts/echo-discussion-sink.py"), "--sync-session", sessA, "--repo", scratch],
+      { env: envDry, encoding: "utf8" },
+    );
+    assert.equal(rsA1.status, 0, rsA1.stderr);
+    const outSA1 = JSON.parse(rsA1.stdout);
+    assert.equal(outSA1.ops[0]?.op, "createDiscussion", "首个 session 首次 /mana 指令须创建 Discussion");
+    assert.ok(
+      existsSync(join(scratch, ".mana", "echo-sessions", "01a16693-aaaa.json")),
+      "须生成 .mana/echo-sessions/<session_id>.json",
+    );
+    const rsA2 = spawnSync(
+      "python3",
+      [join(REPO, "scripts/echo-discussion-sink.py"), "--sync-session", sessA, "--repo", scratch],
+      { env: envDry, encoding: "utf8" },
+    );
+    assert.equal(JSON.parse(rsA2.stdout).ops.length, 0, "同一 session 无新回合时幂等 0 操作");
+
+    const sessB = join(scratch, "2026-10-23T03-00-00-001Z_01b27700-bbbb.jsonl");
+    writeFileSync(
+      sessB,
+      [
+        JSON.stringify({ type: "session", id: "01b27700-bbbb", cwd: scratch }),
+        JSON.stringify({
+          type: "message",
+          id: "u2",
+          message: { role: "user", content: [{ type: "text", text: "/mana run #224" }] },
+        }),
+      ].join("\n") + "\n",
+    );
+    const rsB1 = spawnSync(
+      "python3",
+      [join(REPO, "scripts/echo-discussion-sink.py"), "--sync-session", sessB, "--repo", scratch],
+      { env: envDry, encoding: "utf8" },
+    );
+    assert.equal(rsB1.status, 0, rsB1.stderr);
+    const outSB1 = JSON.parse(rsB1.stdout);
+    assert.equal(outSB1.ops[0]?.op, "createDiscussion", "/new 或重启切换新 session_id 后须创建新 Discussion");
+    assert.equal(outSB1.ops[0]?.session_id, "01b27700-bbbb");
+
     console.log(
-      "✓ 合成 drill 通过：默认 dry-run 幂等落盘 + MANA_ECHO_LIVE=1 异常非阻断降级 + 两条负例真失败",
+      "✓ 合成 drill 通过：Session 级反射（同 session 复用 / 换 session 新建）+ 默认 dry-run 幂等 + MANA_ECHO_LIVE=1 异常非阻断降级 + 两条负例真失败",
     );
   } finally {
     rmSync(scratch, { recursive: true, force: true });
