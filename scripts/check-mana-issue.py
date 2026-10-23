@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""mana intake Issue 骨架校验器：6 段骨架缺项即非 0。
+"""mana intake Issue 骨架校验器：6 段骨架缺项即非 0（多 lane 时另校验 Shared contracts 与 Ownership）。
 
 用途：把 mana §1 intake 第 2 步的「Issue 定稿」变成机器可判定谓词——
 进入 `/mana run` 之前先跑本脚本，`exit 0` 才可授权；非 0 回 intake 补齐。
 
 校验 6 段：Depends on / Files / Build / Verify（须同时含 unit 与 live 子项）/
-Review gate / Merge。markdown 标题层级不限（##/###/粗体行），大小写与空白
-差异不误判；缺哪段逐条点名，全部错误一次性列全。
+Review gate / Merge。当显式传入 `--multi-lane` 或正文中声明 ≥2 个 `lane-<id>` 时，
+额外要求 `Shared contracts`（跨 lane 共享 API/数据契约）与 `Ownership`（lane -> 路径所有权矩阵，且禁止同一路径双写）。
+markdown 标题层级不限（##/###/粗体行），大小写与空白差异不误判；缺哪段逐条点名，全部错误一次性列全。
 
 示例：
   python3 scripts/check-mana-issue.py --self-test
@@ -29,6 +30,11 @@ SECTIONS: list[tuple[str, str]] = [
     ("Verify", "补一段验收命令，且必须同时含 unit 与 live 两类子项"),
     ("Review gate", "PR 描述须贴验收实际输出"),
     ("Merge", "补一段写明合并方式与合并后清理"),
+]
+
+MULTI_LANE_SECTIONS: list[tuple[str, str]] = [
+    ("Shared contracts", "多 lane 并行时须补一段跨 lane 共享 API/数据契约（无跨 lane 接口也写明「无」）"),
+    ("Ownership", "多 lane 并行时须补一段 lane -> 路径所有权矩阵（禁止同一路径双写）"),
 ]
 
 
@@ -71,7 +77,34 @@ def find_section(sections: dict[str, str], name: str) -> str | None:
     return None
 
 
-def validate(body: str) -> list[str]:
+def is_multi_lane_body(body: str) -> bool:
+    """检测正文是否声明了 ≥2 个不同的 lane-<id> 标识。"""
+    lanes = {m.group(0).lower() for m in re.finditer(r"\blane-[a-z0-9_]+\b", body, re.IGNORECASE)}
+    return len(lanes) >= 2
+
+
+def check_ownership_conflicts(ownership_text: str) -> list[str]:
+    """解析 Ownership 段中 `lane-x: path1, path2` 行，检测跨 lane 双写同一路径。"""
+    path_owners: dict[str, str] = {}
+    conflicts: list[str] = []
+    for raw_line in ownership_text.splitlines():
+        m = re.search(r"\b(lane-[a-z0-9_]+)\b\s*[:：→>-]+\s*(.+)$", raw_line.strip(), re.IGNORECASE)
+        if not m:
+            continue
+        lane_id = m.group(1).lower()
+        for token in re.split(r"[,，\s]+", m.group(2)):
+            cleaned = token.strip("`'\"()[]")
+            if not cleaned or cleaned in ("-", "无", "readonly"):
+                continue
+            prev = path_owners.get(cleaned)
+            if prev and prev != lane_id:
+                conflicts.append(f"`Ownership` 段存在跨 lane 双写冲突：路径 `{cleaned}` 同时被 `{prev}` 与 `{lane_id}` 声明。")
+            else:
+                path_owners[cleaned] = lane_id
+    return conflicts
+
+
+def validate(body: str, multi_lane: bool | None = None) -> list[str]:
     """返回全部错误（缺项逐条点名），空列表即通过。"""
     sections = parse_sections(body)
     errors: list[str] = []
@@ -89,6 +122,15 @@ def validate(body: str) -> list[str]:
         ):
             if not re.search(rf"\b{sub}\b", verify_text, re.IGNORECASE):
                 errors.append(f"`Verify` 段缺 `{sub}` 子项：{hint}。")
+
+    need_multi = is_multi_lane_body(body) if multi_lane is None else multi_lane
+    if need_multi:
+        for name, hint in MULTI_LANE_SECTIONS:
+            text = find_section(sections, name)
+            if text is None:
+                errors.append(f"缺 `{name}` 段：{hint}。")
+            elif name == "Ownership":
+                errors.extend(check_ownership_conflicts(text))
     return errors
 
 
@@ -143,6 +185,27 @@ def self_test() -> int:
 
     sections = parse_sections(full)
     assert find_section(sections, "Files") is not None  # 「Files（边界）」前缀命中
+
+    # 多 lane 校验：含 lane-a / lane-b 时要求 Shared contracts 与 Ownership，且拦截跨 lane 路径双写
+    multi_missing = full + "\n- lane-a 与 lane-b 并行\n"
+    m_errs = validate(multi_missing)
+    assert any("Shared contracts" in e for e in m_errs) and any("Ownership" in e for e in m_errs), m_errs
+
+    multi_ok = (
+        multi_missing
+        + "## Shared contracts\n- 无跨 lane 共享可变状态\n"
+        + "## Ownership\n- lane-a: scripts/a.py\n- lane-b: scripts/b.py\n"
+    )
+    assert validate(multi_ok) == [], validate(multi_ok)
+
+    multi_conflict = (
+        multi_missing
+        + "## Shared contracts\n- 共享 state.json\n"
+        + "## Ownership\n- lane-a: scripts/a.py\n- lane-b: scripts/a.py\n"
+    )
+    c_errs = validate(multi_conflict)
+    assert any("双写冲突" in e for e in c_errs), c_errs
+
     print("✓ self-test ok")
     return 0
 
@@ -151,6 +214,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="mana intake Issue 骨架校验器（缺项即非 0）")
     ap.add_argument("--body", help="Issue 正文文件路径，或 - 读 stdin")
     ap.add_argument("--number", type=int, help="经 gh issue view <N> 取正文")
+    ap.add_argument("--multi-lane", action="store_true", help="强制要求多 lane 附加段（Shared contracts / Ownership）")
     ap.add_argument("--json", action="store_true", help="机器可读 JSON 输出")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
@@ -172,7 +236,7 @@ def main() -> int:
     else:
         ap.error("需要 --body <file|-> 或 --number <N>")
 
-    errors = validate(body)
+    errors = validate(body, multi_lane=True if args.multi_lane else None)
     if args.json:
         print(json.dumps({"ok": not errors, "errors": errors}, ensure_ascii=False, indent=2))
     elif errors:
