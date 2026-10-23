@@ -5,6 +5,12 @@
 # MANA_PREFLIGHT_SKIP_SMOKE=1 跳过 pi -p 线路冒烟（仅 T 类阴性测试注入用，正常 run 不用）。
 set -u
 
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  echo "Usage: bash scripts/mana-preflight.sh [--help]"
+  echo "  Runs /mana run preflight gates (env, pi, line, selftest, install, pig, config)."
+  exit 0
+fi
+
 FAIL() { echo "PREFLIGHT FAIL: $1" >&2; exit 1; }
 WARN() { echo "PREFLIGHT WARN: $1" >&2; }
 OK()   { echo "ok: $1"; }
@@ -131,8 +137,33 @@ if [ "${MANA_PREFLIGHT_SKIP_SMOKE:-}" = "1" ]; then
   WARN "线路门: pi -p 冒烟已跳过（MANA_PREFLIGHT_SKIP_SMOKE=1，仅供阴性测试）"
 else
   SMOKE_TMP="$(mktemp)"; trap 'rm -f "$SMOKE_TMP"' EXIT
-  timeout -k 15 240 "${PI_RUN[@]}" -p '只回答OK' >"$SMOKE_TMP" 2>&1
-  SMOKE_RC=$?
+  "${PI_RUN[@]}" -p '只回答OK' >"$SMOKE_TMP" 2>&1 </dev/null &
+  SMOKE_PID=$!
+  SMOKE_RC=0
+  for ((_i=0; _i<240; _i++)); do
+    if ! kill -0 "$SMOKE_PID" 2>/dev/null; then
+      break
+    fi
+    if grep -q 'OK' "$SMOKE_TMP" 2>/dev/null; then
+      kill -TERM "$SMOKE_PID" 2>/dev/null || true
+      sleep 0.2
+      kill -KILL "$SMOKE_PID" 2>/dev/null || true
+      break
+    fi
+    sleep 1
+  done
+  if kill -0 "$SMOKE_PID" 2>/dev/null; then
+    kill -TERM "$SMOKE_PID" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$SMOKE_PID" 2>/dev/null || true
+    SMOKE_RC=124
+  elif grep -q 'OK' "$SMOKE_TMP" 2>/dev/null; then
+    wait "$SMOKE_PID" 2>/dev/null || true
+    SMOKE_RC=0
+  else
+    wait "$SMOKE_PID" 2>/dev/null
+    SMOKE_RC=$?
+  fi
   SMOKE_OUT="$(cat "$SMOKE_TMP")"
   LINE_STATE="$(classify_line "$SMOKE_RC" "$SMOKE_OUT")"
   case "$LINE_STATE" in
@@ -168,7 +199,7 @@ if [ "$DRIFT_STATE" = "drift" ]; then
 fi
 OK "线路门: state=$LINE_STATE drift=$DRIFT_STATE line=$WORKER_MODEL"
 LIST_TMP="$(mktemp)"
-timeout -k 10 120 "${PI_RUN[@]}" --list-models >"$LIST_TMP" 2>/dev/null || true
+timeout -k 2 10 "${PI_RUN[@]}" --list-models >"$LIST_TMP" 2>/dev/null </dev/null || true
 LIST_OUT="$(cat "$LIST_TMP")"; rm -f "$LIST_TMP"
 PROVIDER="${WORKER_MODEL%%/*}"; MODEL="${WORKER_MODEL#*/}"
 if ! grep -qF -- "$PROVIDER" <<<"$LIST_OUT" && ! grep -qF -- "$MODEL" <<<"$LIST_OUT"; then
@@ -283,5 +314,8 @@ case "$ASK_TIMEOUT" in ''|*[!0-9]*) FAIL "配置门: omp config get ask.timeout 
 [ "$ASK_TIMEOUT" -gt 0 ] || FAIL "配置门: ask.timeout=$ASK_TIMEOUT 须 > 0（orchestrator 自决兜底依赖它）"
 OK "配置门: ask.timeout=$ASK_TIMEOUT"
 
+if [ -z "${MANA_SELFTEST_ACTIVE:-}" ] && [ -z "${MANA_PREFLIGHT_SKIP_SMOKE:-}" ] && [ -f "$SCRIPT_DIR/echo-discussion-sink.py" ]; then
+  nohup python3 "$SCRIPT_DIR/echo-discussion-sink.py" --watch-repo "$REPO_ROOT" >/dev/null 2>&1 </dev/null &
+fi
 echo "PREFLIGHT PASS: worker_model=$WORKER_MODEL pi=$PI_VERSION 线路门: state=$LINE_STATE drift=$DRIFT_STATE line=$WORKER_MODEL"
 exit 0

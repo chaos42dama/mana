@@ -106,6 +106,9 @@ sweep_repo() {
     return 0
   fi
 
+  if [[ -f "$ECHO_SINK" ]]; then
+    nohup python3 "$ECHO_SINK" --watch-repo "$repo" >/dev/null 2>&1 </dev/null &
+  fi
   while IFS= read -r -d '' state_file; do
     run_dir=${state_file%/state.json}
     run_id=${run_dir##*/}

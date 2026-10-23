@@ -65,13 +65,25 @@ def short_text(text: Any, limit: int = 160) -> str:
 
 
 def is_live_enabled(cli_live: bool = False, cli_dry_run: bool = False, env: dict[str, str] | None = None) -> bool:
-    """判定是否启用线上 GraphQL 写入：--dry-run 强制关闭；否则 --live 或 MANA_ECHO_LIVE=1 开启。"""
+    """判定是否启用线上 GraphQL 写入：--dry-run 强制关闭；否则 --live 或 MANA_ECHO_LIVE=1 开启。
+    当 env 未显式指定且进程环境未包含 MANA_ECHO_LIVE 时，回退检查 ~/.bashrc / ~/.profile 中的 export MANA_ECHO_LIVE=1，
+    确保在注入环境变量前已启动的旧 omp/herdr 会话派生子进程也能立即生效。"""
     if cli_dry_run:
         return False
     if cli_live:
         return True
     environ = env if env is not None else os.environ
-    return environ.get("MANA_ECHO_LIVE") == "1"
+    if "MANA_ECHO_LIVE" in environ:
+        return environ.get("MANA_ECHO_LIVE") == "1"
+    if env is None:
+        for rc_name in (".bashrc", ".bash_profile", ".profile"):
+            rc_path = Path.home() / rc_name
+            try:
+                if rc_path.exists() and re.search(r"""^\s*export\s+MANA_ECHO_LIVE=['"]?1['"]?\b""", rc_path.read_text(encoding="utf-8", errors="ignore"), re.M):
+                    return True
+            except Exception:
+                pass
+    return False
 
 
 def gh_graphql(query: str, variables: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
@@ -418,6 +430,29 @@ def sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) -> list
         sess = ln.get("session_jsonl") or ln.get("agent_session")
         if isinstance(sess, dict):
             sess = sess.get("value") or sess.get("path")
+        if not sess and not dry_run:
+            cached_sess = (sink.data.get("session_paths") or {}).get(lid)
+            if cached_sess:
+                sess = cached_sess
+            else:
+                target = ln.get("agent_name") or ln.get("pane_id")
+                if target:
+                    try:
+                        hr = subprocess.run(
+                            ["herdr", "agent", "get", str(target)],
+                            capture_output=True,
+                            text=True,
+                            timeout=3,
+                            check=False,
+                        )
+                        if hr.returncode == 0 and hr.stdout.strip():
+                            hdata = json.loads(hr.stdout)
+                            asess = ((hdata.get("result") or {}).get("agent") or {}).get("agent_session") or {}
+                            if isinstance(asess, dict) and asess.get("value"):
+                                sess = str(asess["value"])
+                                sink.data.setdefault("session_paths", {})[lid] = sess
+                    except Exception:
+                        pass
         if isinstance(sess, str) and sess.strip():
             s_path = Path(sess.strip())
             ev_path = run_dir / "lanes" / f"{lid}.events.jsonl"
@@ -768,10 +803,47 @@ def run_selftest() -> None:
     print("echo-discussion-sink selftest OK (redact + create + idempotent + nested replyToId + events.jsonl + MANA_ECHO_LIVE gate)")
 
 
+def watch_repo(repo_dir: Path, live: bool, interval_sec: float = 3.0, max_idle_sec: float = 1800.0) -> None:
+    """单实例后台实时尾随守护：每 3s 扫描 repo/.mana/*/state.json，一旦创建或状态/决策更新即秒级反射到 echo 讨论区。"""
+    import fcntl
+    import hashlib
+    import time
+
+    mana_root = repo_dir / ".mana"
+    repo_hash = hashlib.sha256(str(repo_dir.resolve()).encode("utf-8")).hexdigest()[:16]
+    lock_path = Path(f"/tmp/mana-echo-watch-{repo_hash}.lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_fh:
+        try:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        last_active = time.time()
+        while True:
+            now = time.time()
+            has_recent = False
+            if mana_root.is_dir():
+                for sfile in mana_root.glob("*/state.json"):
+                    rdir = sfile.parent
+                    try:
+                        mtime = sfile.stat().st_mtime
+                    except OSError:
+                        continue
+                    if (now - mtime) <= 7200 or (rdir / "echo-state.json").exists():
+                        if (now - mtime) <= 1800:
+                            has_recent = True
+                        safe_sync_mana_run(rdir, rdir / "echo-state.json", dry_run=not live)
+            if has_recent:
+                last_active = now
+            elif (now - last_active) >= max_idle_sec:
+                break
+            time.sleep(interval_sec)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Sync agent execution steps to 41490/ipi echo Discussions")
     ap.add_argument("--self-test", action="store_true", help="Run offline self-test")
     ap.add_argument("--sync-mana", type=Path, help="Path to .mana/<run-id> directory")
+    ap.add_argument("--watch-repo", type=Path, help="Watch <repo>/.mana/*/state.json in real-time (3s interval)")
     ap.add_argument("--distill-session", type=Path, help="Path to worker session .jsonl to distill")
     ap.add_argument("--out", type=Path, help="Output .events.jsonl path for --distill-session")
     ap.add_argument("--live", action="store_true", help="Actually execute GraphQL mutations (or set MANA_ECHO_LIVE=1)")
@@ -791,6 +863,10 @@ def main() -> None:
         live = is_live_enabled(args.live, args.dry_run)
         res = safe_sync_mana_run(rdir, rdir / "echo-state.json", dry_run=not live)
         print(json.dumps(res, ensure_ascii=False, indent=2))
+        return
+    if args.watch_repo:
+        live = is_live_enabled(args.live, args.dry_run)
+        watch_repo(args.watch_repo.resolve(), live=live)
         return
     ap.print_help()
 
