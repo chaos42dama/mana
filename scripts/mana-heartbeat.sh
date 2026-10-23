@@ -113,15 +113,15 @@ sweep_repo() {
       log_line "$repo" "$run_id" "-" "invalid" "skip"
       continue
     fi
+    lanes_ok=$(jq -r 'any(.lanes[]; (.status // "") as $s | $s == "planned" or $s == "running" or $s == "verifying")' "$state_file" 2>/dev/null || printf 'false')
+    # 旁路同步近 120 分钟内活跃/更新的 run（或已建 echo-state.json 的跟踪中 run）到 41490/ipi echo 讨论帖，历史旧归档不回溯刷帖
+    if [[ -f "$ECHO_SINK" ]] && { [[ -f "$run_dir/echo-state.json" ]] || [[ -n "$(find "$state_file" -mmin -120 2>/dev/null)" ]]; }; then
+      python3 "$ECHO_SINK" --sync-mana "$run_dir" >/dev/null 2>&1 || log_line "$repo" "$run_id" "-" "echo-warn" "echo-sync-failed"
+    fi
     agent=$(jq -r '.orchestrator.agent_name // empty' "$state_file" 2>/dev/null || true)
     if [[ -z "$agent" ]]; then
       log_line "$repo" "$run_id" "-" "missing-agent" "skip"
       continue
-    fi
-    lanes_ok=$(jq -r 'any(.lanes[]; (.status // "") as $s | $s == "planned" or $s == "running" or $s == "verifying")' "$state_file" 2>/dev/null || printf 'false')
-    # 旁路同步活跃 run（或已有 echo-state.json / 近 15 分钟内收尾的终态 run）到 41490/ipi echo 讨论帖，历史旧归档不回溯刷帖
-    if [[ -f "$ECHO_SINK" ]] && { [[ "$lanes_ok" == true ]] || [[ -f "$run_dir/echo-state.json" ]] || [[ -n "$(find "$state_file" -mmin -15 2>/dev/null)" ]]; }; then
-      python3 "$ECHO_SINK" --sync-mana "$run_dir" >/dev/null 2>&1 || log_line "$repo" "$run_id" "-" "echo-warn" "echo-sync-failed"
     fi
     if [[ "$lanes_ok" != true ]]; then
       log_line "$repo" "$run_id" "$agent" "terminal" "skip"
