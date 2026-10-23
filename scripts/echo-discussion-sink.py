@@ -848,6 +848,8 @@ def sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) -> list
     """读取 mana 的 .mana/<run-id>/state.json (及可选 decisions.tsv / 会话 JSONL),
     按方案 A 增量映射为 41490/ipi echo 分类下的 1 个主帖 + 每个阶段/决策/状态跃迁 1 条回复。"""
     sink = EchoSinkState(state_file)
+    if sink.data.get("managed_by_session") and not dry_run:
+        return []
     ops, meta, lanes = _sync_mana_run_into_sink(run_dir, sink, dry_run=dry_run, session_meta=None)
     title = f"[echo] mana · {meta['run_id']} · {meta['status']}"
     root_body = format_root_body(meta, lanes)
@@ -957,7 +959,11 @@ def _sync_session_locked(
         if existing_echo.is_file():
             try:
                 ex_data = json.loads(existing_echo.read_text(encoding="utf-8"))
-                if ex_data.get("discussion_id") and not sink.data.get("discussion_id"):
+                if (
+                    ex_data.get("discussion_id")
+                    and not sink.data.get("discussion_id")
+                    and ex_data.get("managed_by_session") in (None, session_id)
+                ):
                     for k in ("discussion_id", "discussion_number", "discussion_url", "step_seq", "lane_Anchor_comments", "synced_decision_count", "synced_tsv_count", "synced_lane_states", "session_offsets", "session_paths", "lane_last_comments"):
                         if k in ex_data:
                             sink.data[k] = ex_data[k]
@@ -1066,10 +1072,13 @@ def _sync_session_locked(
             ops.extend(run_ops)
             latest_lanes = run_lanes
             meta["issue_ref"] = run_meta.get("issue_ref") or meta["issue_ref"]
-            # 将 run_dir/echo-state.json 同步镜像为同一份 discussion 状态，防止 --sync-mana 重复建帖
+            # 在 run_dir/echo-state.json 标记 managed_by_session，防止 --sync-mana 重复处理或覆盖主帖看板
             try:
                 run_echo = EchoSinkState(rdir / "echo-state.json")
-                run_echo.data.update(sink.data)
+                run_echo.data["managed_by_session"] = session_id
+                run_echo.data["discussion_id"] = sink.data["discussion_id"]
+                run_echo.data["discussion_number"] = sink.data["discussion_number"]
+                run_echo.data["discussion_url"] = sink.data["discussion_url"]
                 run_echo.save()
             except Exception:
                 pass
@@ -1136,6 +1145,8 @@ def discover_repo_sessions(repo_dir: Path, max_age_sec: float = 1200.0) -> list[
         if not candidate_dir.is_dir():
             continue
         for jf in candidate_dir.glob("*.jsonl"):
+            if jf.name < "2026-10-23T01":
+                continue
             try:
                 if (now - jf.stat().st_mtime) <= max_age_sec:
                     found.append(jf)
