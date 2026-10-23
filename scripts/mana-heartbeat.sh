@@ -108,7 +108,7 @@ sweep_repo() {
   if [[ -f "$ECHO_SINK" ]]; then
     nohup python3 "$ECHO_SINK" --watch-repo "$repo" >/dev/null 2>&1 </dev/null &
     local _slug="--$(printf '%s' "$repo" | sed 's#^/##; s#/#-#g')--"
-    for _sess in "$HOME/.omp/agent/sessions/$_slug"/*.jsonl "$HOME/.pi/agent/sessions/$_slug"/*.jsonl; do
+    for _sess in "$HOME/.omp/agent/sessions/$_slug"/2026-10-23*.jsonl "$HOME/.pi/agent/sessions/$_slug"/2026-10-23*.jsonl; do
       [[ -f "$_sess" ]] || continue
       if [[ -n "$(find "$_sess" -mmin -20 2>/dev/null)" ]]; then
         python3 "$ECHO_SINK" --sync-session "$_sess" --repo "$repo" >/dev/null 2>&1 || true
