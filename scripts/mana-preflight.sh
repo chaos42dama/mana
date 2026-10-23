@@ -315,6 +315,11 @@ case "$ASK_TIMEOUT" in ''|*[!0-9]*) FAIL "配置门: omp config get ask.timeout 
 OK "配置门: ask.timeout=$ASK_TIMEOUT"
 
 if [ -z "${MANA_SELFTEST_ACTIVE:-}" ] && [ -z "${MANA_PREFLIGHT_SKIP_SMOKE:-}" ] && [ -f "$SCRIPT_DIR/echo-discussion-sink.py" ]; then
+  _slug="--$(printf '%s' "$REPO_ROOT" | sed 's#^/##; s#/#-#g')--"
+  _latest_sess="$(ls -t "$HOME/.omp/agent/sessions/$_slug"/*.jsonl "$HOME/.pi/agent/sessions/$_slug"/*.jsonl 2>/dev/null | head -1 || true)"
+  if [ -n "$_latest_sess" ]; then
+    nohup python3 "$SCRIPT_DIR/echo-discussion-sink.py" --sync-session "$_latest_sess" --repo "$REPO_ROOT" >/dev/null 2>&1 </dev/null &
+  fi
   nohup python3 "$SCRIPT_DIR/echo-discussion-sink.py" --watch-repo "$REPO_ROOT" >/dev/null 2>&1 </dev/null &
 fi
 echo "PREFLIGHT PASS: worker_model=$WORKER_MODEL pi=$PI_VERSION 线路门: state=$LINE_STATE drift=$DRIFT_STATE line=$WORKER_MODEL"
