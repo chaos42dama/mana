@@ -397,8 +397,9 @@ def parse_session_jsonl(session_path: Path) -> dict[str, Any]:
                             or json.dumps(args, ensure_ascii=False)
                         )
                         arg_str = str(arg_val or "")
-                        for m_run in re.finditer(r"\.mana/(run-[A-Za-z0-9_.-]+)", arg_str):
-                            run_id_set.add(m_run.group(1))
+                        if re.search(r"mkdir\b|mana-run-lock\.py|echo-discussion-sink\.py\s+--sync-mana|>\s*[^\n]*\.mana/", arg_str):
+                            for m_run in re.finditer(r"\.mana/(run-[A-Za-z0-9_.-]+)", arg_str):
+                                run_id_set.add(m_run.group(1))
                         current_turn["tool_trace"].append(f"🔧 {tname}: {short_text(arg_str, 140)}")
                         if tname == "read" and "skill://mana" in arg_str:
                             info["has_mana_command"] = True
@@ -897,8 +898,26 @@ def sync_session(
     if not sess_info["has_mana_command"]:
         return []
 
+    import fcntl
     resolved_repo, default_state_file = resolve_session_state_file(session_path, repo_dir)
     target_state_file = state_file or default_state_file
+    target_state_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = target_state_file.with_suffix(".lock")
+    with lock_file.open("a+", encoding="utf-8") as lock_fh:
+        try:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return []
+        return _sync_session_locked(sess_info, session_path, resolved_repo, target_state_file, dry_run=dry_run)
+
+
+def _sync_session_locked(
+    sess_info: dict[str, Any],
+    session_path: Path,
+    resolved_repo: Path,
+    target_state_file: Path,
+    dry_run: bool = True,
+) -> list[dict[str, Any]]:
     sink = EchoSinkState(target_state_file)
 
     session_id = sess_info["session_id"]
@@ -1030,7 +1049,13 @@ def sync_session(
     latest_lanes: list[dict[str, Any]] | None = None
     for run_id in sess_info["referenced_run_ids"]:
         rdir = resolved_repo / ".mana" / run_id
-        if (rdir / "state.json").is_file():
+        sjson = rdir / "state.json"
+        if sjson.is_file():
+            try:
+                if not dry_run and (session_path.stat().st_ctime - sjson.stat().st_mtime) > 3600:
+                    continue
+            except OSError:
+                pass
             # 若该 run_dir 之前已被旧守护创建过独立 echo-state.json 且当前 session 刚建，或者共享当前 session sink
             run_ops, run_meta, run_lanes = _sync_mana_run_into_sink(
                 rdir,
@@ -1101,7 +1126,7 @@ def safe_sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) ->
         return {"ok": False, "dry_run": dry_run, "error": err_msg, "ops": []}
 
 
-def discover_repo_sessions(repo_dir: Path, max_age_sec: float = 7200.0) -> list[Path]:
+def discover_repo_sessions(repo_dir: Path, max_age_sec: float = 1200.0) -> list[Path]:
     """扫描 ~/.omp/agent/sessions 与 ~/.pi/agent/sessions 中匹配 repo_dir 的近期会话 JSONL。"""
     slug = "--" + str(repo_dir.resolve()).strip("/").replace("/", "-") + "--"
     found: list[Path] = []
@@ -1354,7 +1379,7 @@ def watch_repo(repo_dir: Path, live: bool, interval_sec: float = 3.0, max_idle_s
             now = time.time()
             has_recent = False
             # 1) 优先按 Session 粒度扫描当前仓库的 omp/pi 会话 JSONL
-            for sess_file in discover_repo_sessions(repo_dir, max_age_sec=7200.0):
+            for sess_file in discover_repo_sessions(repo_dir, max_age_sec=1200.0):
                 try:
                     if (now - sess_file.stat().st_mtime) <= 1800:
                         has_recent = True

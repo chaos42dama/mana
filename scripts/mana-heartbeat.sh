@@ -110,7 +110,7 @@ sweep_repo() {
     local _slug="--$(printf '%s' "$repo" | sed 's#^/##; s#/#-#g')--"
     for _sess in "$HOME/.omp/agent/sessions/$_slug"/*.jsonl "$HOME/.pi/agent/sessions/$_slug"/*.jsonl; do
       [[ -f "$_sess" ]] || continue
-      if [[ -n "$(find "$_sess" -mmin -120 2>/dev/null)" ]]; then
+      if [[ -n "$(find "$_sess" -mmin -20 2>/dev/null)" ]]; then
         python3 "$ECHO_SINK" --sync-session "$_sess" --repo "$repo" >/dev/null 2>&1 || true
       fi
     done
