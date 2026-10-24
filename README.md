@@ -174,6 +174,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 | --- | --- |
 | `/mana <目标>` | **intake**：追问目标/非目标/验收/风险路径，收敛为可验收 Issue + 建议 `tier_grants`；不派发。Issue 定稿先过 `python3 ~/.omp/agent/skills/mana/scripts/check-mana-issue.py` 骨架校验，`exit 0` 才可进 run |
 | `/mana how/why/teach/recall/echo <范围>` | **context**：只读上下文问答，不写代码；how/why 支持并行只读取证 lane（how：Complex 拆切面 ≤ `max_parallel_lanes`；why：代码锚点先行 + 每证据类别一条 investigator + 四档证据分级）；结论默认不落盘，仅在回复里交付，明确要求才写 `.mana/<context-id>/`；`/mana echo` 另做目标对齐自检 |
+| `/mana anti [<主题|#N>]` | **context**：只读前提审计入口——追问任务定义本身是否问错了、反复讨论里一直绕开了什么；只给 1 个主深层问题 + 停问清单，默认为不派 lane、不改 Issue；种子句与七步骨架见 `skills/mana/references/anti-premise-prompt.md` |
 | `/mana architect <范围>` | **context**：只读多线路设计入口——2–3 条独立 sketch lane 交叉评审合成 design package，落盘 `.mana/<design-id>/`；不写实现代码、不 push/merge，实现归 `/mana run` |
 | `/mana prototype <决策问题>` | **context**：只读原型入口——throwaway 多变体原型 + 一个 switcher + 观测量回答一个具体决策，落盘 `.mana/<probe-id>/`；原型永不进主干，不承诺自动截图（UI 类只到能渲染 + 人工看） |
 | `/mana veri <目标>` | **context**：只读验证技能生成入口——init（五步访谈 → 生成 verify-<app> 技能 → 端到端实跑）/doctor/status 三口，永不改产品代码；maintain 例行对账（三结果 `clean|changed|blocked`，`--source-only` 只标 partial）；落盘/维护细节见技能 veri 条目 |
