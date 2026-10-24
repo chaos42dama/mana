@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // /mana architect 只读设计入口契约自检（Issue #55）
-// 无参数：断言 skills/mana/SKILL.md context 第 6 条 architect 契约原文（按内容匹配，不按行号）——
+// 无参数：断言 skills/mana/SKILL.md context 第 7 条 architect 契约原文（按内容匹配，不按行号）——
 //         条目在位（只读设计入口 + 五阶段）、五阶段各自的关键句（A 接地 / B 独立 sketch /
 //         C 交叉评审与合成 / D 交付 / E 偏离即信号）、2–3 条只读 Pi lane 且架构命令模板
 //         不含 --model（负向断言）、四红旗被引用为筛选依据、产物落盘
@@ -94,12 +94,12 @@ const GROUPS = [
   },
 ];
 
-// 取 context 第 6 条 architect 条目文本（到下一个同层编号条目为止），供负向断言圈定范围
+// 取 context 第 7 条 architect 条目文本（到下一个同层编号条目为止），供负向断言圈定范围
 function architectSection(skill, label) {
-  const start = skill.indexOf("6. **architect**");
-  assert.ok(start >= 0, `${label} 未找到 context 第 6 条 architect 条目`);
+  const start = skill.indexOf("7. **architect**");
+  assert.ok(start >= 0, `${label} 未找到 context 第 7 条 architect 条目`);
   const rest = skill.slice(start);
-  const end = rest.search(/\n7\. /);
+  const end = rest.search(/\n8\. /);
   return end >= 0 ? rest.slice(0, end) : rest;
 }
 
@@ -118,14 +118,14 @@ function assertArchitectContract(skill, label) {
 function selfTest() {
   // 合成完整版：覆盖全部分组关键原文 + 一对架构命令模板的最小片段
   const full = [
-    "6. **architect**：`/mana architect <范围>` 是只读设计入口——多线路独立 sketch，交叉评审后合成一份 design package。五阶段：",
+    "7. **architect**：`/mana architect <范围>` 是只读设计入口——多线路独立 sketch，交叉评审后合成一份 design package。五阶段：",
     "   - **A 接地**：以 `/mana how` 的证据为准；「命名了一个文件」不算接地，必须给出追踪过的模型（数据流、归属、边界）。纯 greenfield 且无周边系统要集成时可跳过 A，但要在产物里写明跳过理由。",
     "   - **B 独立 sketch**：开 **2–3 条只读 Pi lane**：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <arch-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`（**不传 `--model`**）。brief 用 `~/.omp/agent/skills/mana/references/architect-runner-prompt.md`（references 随 `bash scripts/mana-install.sh` 一起装入 `~/.omp/agent/skills/mana/references/`）。要求各候选**结构上互不相同**的整体形状。",
     "   - **C 交叉评审与合成**：用**另一条**只读 lane 按 intake「设计审查四红旗」逐一筛选每个候选，命中红旗即否决；再按**接口深度**比较——公开面越小、藏起的复杂度越多越好。`Synthesis decision` 必须记录；单候选直接通过不合规。",
     "   - **D 交付**：design package 写 `.mana/<design-id>/design.md`（按 `~/.omp/agent/skills/mana/references/architect-rationale-template.md` 八段），候选留 `.mana/<design-id>/candidates/<n>.md`。",
     "   - **E 偏离即信号**：偏离 sketch 要 surfaced 而不是默默吸收；本入口不写实现代码，实现归 `/mana run`。",
     "   只读边界：不改业务代码、不 push、不 merge、不改 Issue、不写 `.mana/<run-id>/state.json`（只允许写 `.mana/<design-id>/`）；按 §0.8 回收并双 `not_found` 验证；重复执行同一 `<范围>` 新建 `<design-id>`、不覆盖既有产物。",
-    "7. context 是只读入口。",
+    "8. context 是只读入口。",
   ].join("\n");
   assertArchitectContract(full, "合成完整版");
   for (const g of GROUPS) console.log(`  ✓ ${g.name}`);

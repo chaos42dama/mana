@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // /mana veri 只读验证技能生成入口契约自检（Issue #79）
-// 无参数：断言 skills/mana/SKILL.md context 第 8 条 veri 契约原文（按内容匹配，不按行号）——
+// 无参数：断言 skills/mana/SKILL.md context 第 9 条 veri 契约原文（按内容匹配，不按行号）——
 //         条目在位（init/doctor/status 三口 + frontmatter Triggers）、#78 三行决策（canonical
 //         ~/.pi/agent/skills/verify-<app>/ + 共用软链 ~/.omp/agent/skills/verify-<app> + 写界）、
 //         五步访谈（Surface/Run/Drive/Observe/Isolate）、SKILL.md 六节（Launch/Doctor/Drive/
@@ -114,12 +114,12 @@ const GROUPS = [
   },
 ];
 
-// 取 context 第 8 条 veri 条目文本（到下一个同层编号条目为止），供负向断言圈定范围
+// 取 context 第 9 条 veri 条目文本（到下一个同层编号条目为止），供负向断言圈定范围
 function veriSection(skill, label) {
-  const start = skill.indexOf("8. **veri**");
-  assert.ok(start >= 0, `${label} 未找到 context 第 8 条 veri 条目`);
+  const start = skill.indexOf("9. **veri**");
+  assert.ok(start >= 0, `${label} 未找到 context 第 9 条 veri 条目`);
   const rest = skill.slice(start);
-  const end = rest.search(/\n9\. /);
+  const end = rest.search(/\n10\. /);
   return end >= 0 ? rest.slice(0, end) : rest;
 }
 
@@ -160,11 +160,11 @@ function syntheticFull() {
     'description: "Triggers: /mana veri。"',
     "---",
     "### context（不写业务代码）",
-    "8. **veri**：`/mana veri <目标>` 是只读验证技能生成入口，含 init/doctor/status 三口，brief 用 `skills/mana/references/veri-generator-prompt.md`：",
+    "9. **veri**：`/mana veri <目标>` 是只读验证技能生成入口，含 init/doctor/status 三口，brief 用 `skills/mana/references/veri-generator-prompt.md`：",
     "   - **init**：只读 explorer lane **五步访谈**（**Surface / Run / Drive / Observe / Isolate**，只问代码库不问用户）；生成 SKILL.md 六节：**Launch / Doctor / Drive / Evidence / Cleanup / Helpers**，无占位符；features/README.md 索引 + 3–5 个 feature 文件，四 H2 = `Sub-features` / `How to get to it (user POV)` / `Driving it with <harness>` / `Gotchas`，接账本四键 `last_verified_sha` / `last_verified_at` / `verdict` / `prerequisites`；orchestrator 亲自端到端实跑 launch → doctor → drive 1 个 feature → 取证 → cleanup → 确认证据在 cleanup 后仍在。**落盘写死**：工人在目标仓 `.pi/skills/verify-<app>/` 生成（工作区内）；landing 由 orchestrator 安装 canonical `~/.pi/agent/skills/verify-<app>/`，并以软链 `~/.omp/agent/skills/verify-<app>` 共用。**未被执行过的生成技只算 draft，不算交付**。veri 生态**永不改产品代码**。",
     "   - **maintain**——功能地图例行对账（source wave brief 模板用 `skills/mana/references/veri-maintain-prompt.md`）：三结果 **`clean`（无 verify-<app> 或无需改）/ `changed`（只装已证实的修正，≤1 个 PR）/ `blocked`（逐项写明挡点）**。Pass 0–6：**0 定位目标**（无 verify-<app> 就停、指回 init）→ **1 索引卫生**（features/README.md 与 sibling 文件对账，修缺/多/重复/死条目）→ **2 source wave**（每 feature 一条只读 lane，峰值 ≤ `max_parallel_lanes`，不传 `--model`；孩子只读、不驱动、不改文件）→ **3 reconcile**（每 feature 有摘要即齐；除非有具体源码路径不得判缺失）→ **4 live pass**（orchestrator 独占驾驶：每 feature 至少一次；三不变量——doctor 不变量、证据不被 cleanup 吃掉、残留必须清理；`verified-unreachable` 必须写明具体前置条件与尝试路径）→ **5 triage**（doc drift / harness gap / product gap——product gap 记录上报、不进 PR）→ **6 出 PR 或停**（`changed` 时转 intake、经 `/mana run` 出 ≤1 PR）。`--source-only` 只跑 source wave，结果标 **partial**，不得当作 `clean`。编辑范围只限 verify-<app> 自身目录，**永不改产品代码**（行为不对 = doc drift 修地图或 product gap 上报，不纸盖）。",
     "   - 通用约束：lane 数 ≤ `max_parallel_lanes`；dispatch **不传 `--model`**；explore lane 只读（受 safe-guard `~/.pi/**` 用户级硬拦约束）；`/mana veri` 的 PR 上限 1。maintain 结果 `clean|changed|blocked`。dispatch 同 §2：`herdr agent start <veri-name> --kind pi --pane <pane-id>`。",
-    "9. context 是只读入口。",
+    "10. context 是只读入口。",
   ].join("\n");
 }
 
