@@ -145,7 +145,7 @@ function selfTest() {
     );
 
     // (a) 未设 MANA_ECHO_LIVE → dry_run: true，写入 echo-state.json
-    const envDry = { ...process.env };
+    const envDry = { ...process.env, HOME: scratch };
     delete envDry.MANA_ECHO_LIVE;
     const r1 = spawnSync(
       "python3",
