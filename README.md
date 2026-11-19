@@ -18,6 +18,7 @@ Mana 是一个 OMP（oh-my-pi）技能：把一个 OMP session 变成 **orchestr
 8. **失败重试与预算成文**：每条 lane 带 `max_wall_minutes`（默认 30）、`max_rounds`（默认 2，即「同一 lane 最多 2 轮」）与 `retry_mode`（`network|context-overflow|tool-error|none`），run 级 `max_parallel_lanes`（默认 2）只计 running 的 code lane。墙钟超时先取证再裁决，不等于失败；`tool-error` 记 blocker，不自动换线。
 9. **交付洁净契约**：工人输出 `DONE:` 前其 worktree 必须洁净（`git status --short` 为空）；纯格式化/工具自动改写必须与成果一并 commit，不得静默丢弃。编排者绑 `head_sha` 前先查工作树，脏则不判 `verified`，处置（让工人 commit，或明确丢弃并记 `decision_log`）后重验。
 10. **脏树处置可审计**：脏树按三步处置，取证缺失不得处置——① 取证：`git status --short` + `git diff` 原文（含 `git diff --stat` 汇总行）逐字进 `decision_log.evidence`；② 归类：(a) 纯格式化 / (b) 含语义改动，附依据 hunk；③ 处置：(a) commit（工人已收尾时编排者可代 commit 并标注）；(b) 禁止静默丢弃，打回不推进 `attempt`、不消耗 `max_rounds`，仍丢弃则列 `Attention`。
+11. **收尾锁状态是机器判据，不是"看起来干净"**：持锁会话只能是真 tty，禁 `mkfifo`/管道喂命令（读端继承写端 fd 时 `read` 永不 EOF，留下握 `orchestrator.lock` 的孤儿，`resume` 取锁一律 73）；收尾必跑 `mana-run-audit.py`，按锁 inode 扫 `/proc/*/fd` 找持锁进程并判 `CLEAN`。`pgrep -af 'mana-run-lock'` 不可用——入口 `execvpe` 后 cmdline 里没有脚本名，对孤儿是假阴性。
 
 ## 仓库结构
 
@@ -36,6 +37,7 @@ checks/mana-orchestrator-contract.check.mjs  # 编排者侧契约自检：herdr 
 scripts/check-mana-grant-scope.py  # 装机至 ~/.omp/agent/skills/mana/scripts/；tier 授权守卫（--self-test 自带）
 scripts/check-mana-issue.py        # 装机至 `~/.omp/agent/skills/mana/scripts/`；intake Issue 骨架校验
 scripts/mana-run-lock.py           # 装机至 `~/.omp/agent/skills/mana/scripts/`；run 单 owner 协作锁入口
+scripts/mana-run-audit.py          # 装机至 `~/.omp/agent/skills/mana/scripts/`；收尾锁审计（只读，按锁 inode 找持锁进程）
 scripts/mana-preflight.sh          # 装机至 `~/.omp/agent/skills/mana/scripts/`；run 预检七门（任一 FAIL 非 0 即停）
 scripts/mana-selftest.sh           # 装机至 `~/.omp/agent/skills/mana/scripts/`；全仓自检入口（--list/--quick/--only）
 scripts/test_mana_selftest.py      # 装机至 `~/.omp/agent/skills/mana/scripts/`；自检入口回归测试
@@ -114,7 +116,7 @@ bash scripts/mana-install.sh --dry-run
 bash scripts/mana-selftest.sh   # 全仓自检 10 步一条命令（契约 check + 守卫/run 锁/issue 自检与测试 + 五扩展内联自检）；
                                # --quick 只跑前 5 步（run 预检 d 门用这档）；--only <子串> 按步骤名单点排查；--list 只列步骤
 node checks/all.check.mjs   # 一条命令跑全部契约 check 两种模式（无参数断言 + --self-test drill）；单点排查用 --only <子串>
-# ✓ 逐项 ✓ …（共 2×N 行）末行 ALL-16-rc=0
+# ✓ 逐项 ✓ …（共 2×N 行）末行 ALL-17-rc=0
 PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts
 PI_SAFE_GUARD_SELFTEST=1 bun extensions/pi/safe-guard.ts
 PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts
@@ -243,6 +245,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 ### 关键脚本
 
 - `~/.omp/agent/skills/mana/scripts/mana-run-lock.py` — run 单 owner 持锁入口（`fcntl.flock`，竞争失败返回 73）
+- `~/.omp/agent/skills/mana/scripts/mana-run-audit.py` — 收尾锁审计（只读）：按锁 inode 扫 `/proc/*/fd` 找持锁进程，`--expect free|held`，`CLEAN` 才算 run 结束；`pgrep -af 'mana-run-lock'` 因 exec 后 cmdline 不含脚本名而假阴性
 - `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py` — tier 守卫（`--self-test` / `--paths` 预测 / `--base+--allow-key` 复核）
 - `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` — run 预检（环境/pi 解析/线路/装机/配置/扩展自检）
 - `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` — 心跳兜底（可 crontab 定时唤醒 sweep）
@@ -314,6 +317,7 @@ Same idea as [herdr-dispatch](https://github.com/bestony/herdr-dispatch), differ
 10. **Retries and budgets are codified**: each lane carries `max_wall_minutes` (default 30), `max_rounds` (default 2 — the same "at most 2 rounds per lane" rule that `attempt` also caps), and `retry_mode` (`network|context-overflow|tool-error|none`); run-level `max_parallel_lanes` (default 2) counts only running code lanes. A wall-clock overrun means "collect evidence first", never an automatic failure; `tool-error` records a blocker and never switches the model route.
 11. **Delivery hygiene is contractual**: a worker's worktree must be clean (`git status --short` empty) before it may print `DONE:`; pure formatting or tool auto-edits must be committed together with the deliverable, never silently dropped. Before binding `head_sha` the orchestrator checks the worktree — a dirty tree means no `verified` until the worker commits or the orchestrator discards explicitly and logs it in `decision_log`.
 12. **Dirty-tree handling is auditable**: three ordered steps, no evidence no disposition — ① evidence: `git status --short` + `git diff` verbatim (including the `git diff --stat` summary) into `decision_log.evidence`; ② classify: (a) formatting-only vs (b) semantic, with the supporting hunks; ③ dispose: (a) commit (the orchestrator may commit on the worker's behalf and must say so); (b) never silently dropped — sending it back consumes no `attempt`/`max_rounds`, and an actual discard must be listed in the report's `Attention` section.
+13. **Lock teardown is machine-checked**: the lock-holding session must be a real tty — never feed it through `mkfifo`/a pipe. A fifo reader that inherits a writer fd never sees EOF, leaving an idle orphan holding `orchestrator.lock` (every `resume` then fails with 73). Teardown must run `mana-run-audit.py`, which finds holders by scanning `/proc/*/fd` for the lock inode, and report `CLEAN`. `pgrep -af 'mana-run-lock'` is unusable here: the entrypoint `execvpe`s into the target command, so the script name is absent from the cmdline and orphans are false negatives.
 
 ## Install
 
