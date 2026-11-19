@@ -54,6 +54,8 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 - 固定锁文件是 `RUN_DIR/orchestrator.lock`；`fcntl.flock(LOCK_EX|LOCK_NB)` 竞争失败返回 **73**，不会执行子命令。第二会话只能只读或等待显式接管：原 owner 停止 mutation、退出执行会话，确认后代结束，再由新 owner 成功取锁并重读 state。**严禁删除、替换 lock 文件来解决冲突**，否则 inode 分裂会产生双 owner。
 - 入口在同一进程 `os.execvpe`，显式设置锁 FD 可继承；shell `exec` 保留锁，无额外 wrapper。正常退出、信号或异常结束时，最后一个持有该 FD 的进程结束才释放锁；exec 失败自动关闭 FD，命令不存在返回 127，其余 exec 错误返回 126。命令退出码原样保留。
 - fork 后代会继承锁：后台 child 仍持 FD 时，父进程死亡也不能提前接管。持锁 shell 不得提前关闭 FD；命令若主动关闭未知 FD（例如 `close_fds`）则不能代替原 shell 承担锁生命周期。避免脱离会话的后台 mutation，退出前等待后代完成；不能仅凭 PID 消失或元信息判断可接管。
+- **禁止 `mkfifo` + 管道喂命令建持锁会话**（run #3 实测事故）。持锁会话只能是 herdr pane 的真 tty；`nohup bash -c '…read…' < fifo` 这类写法有两个连环缺陷：① 读端**继承了写端 fd** 时 `read` 不返回 EOF（写端由自身 `exec 7<>` 持有即成立），进程永久阻塞且不占 CPU，常规巡检发现不了；② 它握的正是 `orchestrator.lock`，于是任何 `resume` 取锁都拿到 73。管道喂命令同理：写完一端关闭只是"有时"EOF，取决于谁还留着写端，不可判定。
+- 持锁进程**不能靠脚本名或 cmdline 找**：`mana-run-lock.py` 用 `os.execvpe` 落地成目标命令，进程名里**没有** `mana-run-lock`，`pgrep -af 'mana-run-lock'` 对这类孤儿是**假阴性**。唯一可靠取证是按锁文件 `(st_dev, st_ino)` 扫 `/proc/<pid>/fd`。
 - `flock` 仅提供合作进程互斥，不是同 UID 安全沙箱，不能阻止直接工具写入。锁文件中的 owner/PID/run_dir 仅用于诊断，不是权限依据，也不是状态库。
 - 历史 state/Issue 的修正由 Main 负责：保留原始 `observed_claim`，追加 `correction` 和 `source` 证据；不得把旧 claim 静默改成已验证事实。本入口只实现单 owner 锁，不修历史数据。
 
@@ -314,10 +316,11 @@ Issue #8 验收原文：
 3. 等 CI（如 GitHub Actions：`gh run list` / `gh run watch <run-id>`）与项目验收命令；失败则修复、重验，不能因“已授权”跳过。
 4. merge 前对 PR 的真实 diff 复跑授权守卫，把命令与输出写进 state：`authorization.autonomous_landing=true` 且守卫 `exit 0` → 执行 squash merge（`gh pr merge --squash --delete-branch` / `fj pr merge -M squash -d`）；守卫非 0（越出 `tier_grants`）→ 不合并，按 §0.6 上报 CTO。`--manual-landing`（`autonomous_landing=false`）时，PR/CI 后上报 CTO。
 5. PR merge 确认后，orchestrator 移除本 run worktree，删除本地/远端 feature branch，`git fetch --prune` 验证无残留；最后评论并关闭 Issue。
+6. **收尾锁审计（必跑，缺证据不得报 run 完成）**：持锁 shell 退出后跑 `python3 ~/.omp/agent/skills/mana/scripts/mana-run-audit.py <run_dir>`，须 `verdict: CLEAN`（`flock: FREE` + `holder: none` + 无 fifo 残留）才算 run 结束；把输出原文写进 state 与 §5 报告。**不得用 `pgrep -af 'mana-run-lock'` 代替**——持锁入口已 exec 成目标命令，按名字匹配是**假阴性**（run #3 实测：孤儿活着、`pgrep` 零命中）。审计判 `DIRTY` 时的处置：按输出点名的 pid 逐个取原文确认是本次 run 的持锁世代（`cmdline` + `wchan` + `stdin`），再 `kill -TERM`，复跑审计至 `CLEAN`，并在 `decision_log` 记录 pid/时间/原文；**锁文件本身始终不得删改**（会分裂 inode 产生双 owner）。run 进行中做诊断用 `--expect held`：判 `CLEAN` 说明锁按设计被持有；但**持有者 stdin 是命名 fifo 时仍判 `DIRTY`**（`detached_stdin_holders` 会点名 pid）——那是死锁签名，不是健康的进行中 run。
 
 ## §5 报告
 
-全程证据与结论优先评论到对应 Issue（forge CLI）；最终报告含：授权范围、lane 表终态、每条验收实际输出、Pi pane 回收双 `not_found`、PR 号、CI、merge、worktree/branch 清理与后续建议。
+全程证据与结论优先评论到对应 Issue（forge CLI）；最终报告含：授权范围、lane 表终态、每条验收实际输出、Pi pane 回收双 `not_found`、PR 号、CI、merge、worktree/branch 清理、收尾锁审计输出（`mana-run-audit.py` 的 `CLEAN` 原文）与后续建议。
 
 最终报告另设 `Attention` 段：从 `.mana/<run-id>/decisions.tsv` 引出需要人工注意的决策条目（如触碰授权边界、被否决的方案、留有疑义的自决）；无条目时写「无」。固定要求：本 run 内凡发生「编排者代 commit」（§3 第 2 步三步处置 (a)、工人已收尾）或「丢弃含语义改动的 diff」（(b) 仍要丢弃），各列一条，可从 `decisions.tsv` 的 `evidence` 列引用。
 
@@ -354,3 +357,4 @@ run 终态（全部 lane `landed|blocked|failed`）后做一次复盘，四个�
 
 每次 run 结束前断言：state.json 每个 lane status ∈ `reclaimed|blocked|failed|landed`；每个 landed lane 能给出授权范围、命中的 `tier_grant` 与其守卫命令输出、goal 终态、PR 号、tier 判定、验收命令输出、Pi pane 回收证据七者，否则 run 不算完成。
 另断言：每条 lane 的 pane 创建命令含 `--env MANA_WORKER=1`、`herdr agent start` 命令**不含** `--model`、`state.lanes[].model` 记有 session 首条 `model_change` 实测线路；发生重派的 lane 能给出 `attempt`、`superseded_by_agent` 与旧 pane 回收双 `not_found` 证据；run 期间零人工确认 UI（若出现，state 里有对应 `blocker` 与原文）；每条 lane 的 dispatch 能给出启动后校验证据（dispatch 后 `herdr agent get <agent-name>` 曾成功返回具名 agent），半成功情形的处置（限一次自愈，或 `blocker` 上报）在 `decision_log`/`decisions.tsv` 里有记录，且该自愈未推进 `attempt`、未消耗 `max_rounds`；每轮工人 `BLOCKED:` 都有 `QUESTION:`/`RECOMMENDED:` 与 orchestrator 的自决记录；**run 结束断言无遗留的提交后自动格式化改动被静默丢弃**——凡出现提交后宿主工具自动改写的 lane，`decisions.tsv` 必有对应条目，其 `evidence` 含 `git diff --stat` 汇总行与代表性 hunk，且 `decision` 列写明归类读数（`git diff` 原文逐 hunk 读 + `git diff -w` 仅作辅助）与方案 C 处置（纯格式化 `git checkout --` 丢弃，或语义改动打回/代 commit），纯格式化被丢而 decisions.tsv 无条目即判 run 未完成。含 pig lane 时另断言：pane 创建命令含 `--env MANA_WORKER=1`（与 pi 同）、`herdr pane run` 命令**不含** `--model`、`state.lanes[].model` 记有 `~/.pig/agent/sessions` 最新会话首条 `model_change` 实测 `provider/modelId`、回收后 `agent get` 与 `pane get` 双 `not_found`。
+收尾另断言：`mana-run-audit.py <run_dir>` 输出 `verdict: CLEAN`（`flock: FREE` + `holder: none` + `fifo: 无`）原文已进 state 与 §5 报告；只有 `pgrep` 结果、或锁文件被人为删改后才"看起来干净"，都不算证据。
