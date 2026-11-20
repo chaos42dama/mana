@@ -84,13 +84,18 @@ function assertContract(texts = {
 
 function assertRealRunsWarnOnly() {
   // 本仓 .mana/ 真实 run 目录逐个 --check 审计（审计不判败：历史 run 可能由不同口径落盘）
+  // 返回实际审计的 run 数：0 时必须可见 SKIP，否则「契约全绿」是假绿——run #108 实测：
+  // herdr worktree 里 .mana/ 是 ignored 目录不存在，本步静默 return，而末行仍宣称实盘断言通过，
+  // 导致内容不可满足的判据合入主干后才暴露。依赖 .mana/ 实盘数据的契约必须在正本仓验证。
   const manaDir = join(REPO, ".mana");
   let names = [];
   try {
     names = readdirSync(manaDir);
   } catch {
-    return; // 无 .mana/（如 CI 浅检出）→ 跳过
+    console.log("  SKIP：本检出无 .mana/（worktree 内 .mana 被 ignore）→ 实盘同源审计未执行，须在正本仓重跑");
+    return 0;
   }
+  let audited = 0;
   for (const name of names) {
     const runDir = join(manaDir, name);
     if (!existsSync(join(runDir, "decisions.tsv"))) continue;
@@ -105,7 +110,9 @@ function assertRealRunsWarnOnly() {
       // 本契约只对 #108 起合规格式的 run 强断言；定位忠实文本断言 + drill 已足够防删改
       console.log(`  WARN：.mana/${name} 非 #108 合规格式（pre-#108 legacy），同源断言跳过`);
     }
+    audited += 1;
   }
+  return audited;
 }
 
 function selfTest() {
@@ -227,11 +234,12 @@ if (process.argv.includes("--self-test")) {
   selfTest();
 } else {
   assertContract();
-  assertRealRunsWarnOnly();
+  const audited = assertRealRunsWarnOnly();
   const h = spawnSync("python3", [SYNC, "--help"], { encoding: "utf8" });
   assert.equal(h.status, 0, `sync 脚本 --help 须可用：${h.stderr}`);
   assert.match(h.stdout, /--check/);
   console.log(
-    "✓ decisions 同源契约断言通过（SKILL §4 必跑原文 / AGENTS 登记 / correction 映射 / lanes 断言 / 原子写 / --help 可用）+ .mana 实盘同源断言（legacy WARN 跳过 / 不同源判败）",
+    "✓ decisions 同源契约断言通过（SKILL §4 必跑原文 / AGENTS 登记 / correction 映射 / lanes 断言 / 原子写 / --help 可用）" +
+      `+ .mana 实盘同源断言（${audited} 个 run 已审计：legacy WARN 跳过 / 不同源判败）`,
   );
 }
