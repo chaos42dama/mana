@@ -2,18 +2,21 @@
 // 不依赖本机是否装 pig（真实 pig 目录从 PATH 剔除，门内只看 `command -v pig` 与扩展文件）。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { reportArgs } from "../extensions/pig/herdr-agent-state.ts";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-const SCRATCH = join(REPO, ".tmp-pig-gate-check");
+// Issue #115：暂存目录落 tmpdir() 且按进程隔离（mkdtemp），并发跑互不删 fixture、
+// SIGKILL 残留在系统临时目录而非仓库工作树；setupEnv 每次新建子目录保证 HOME/bin 干净。
+const SCRATCH = mkdtempSync(join(tmpdir(), "pig-gate-check-"));
 
 function setupEnv() {
-  rmSync(SCRATCH, { recursive: true, force: true });
-  const home = join(SCRATCH, "home");
-  const bin = join(SCRATCH, "bin");
+  const env = mkdtempSync(join(SCRATCH, "env-"));
+  const home = join(env, "home");
+  const bin = join(env, "bin");
   for (const d of [
     join(home, ".pi/agent/extensions"),
     join(home, ".omp/agent/extensions"),
