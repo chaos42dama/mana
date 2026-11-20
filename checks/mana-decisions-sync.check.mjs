@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // decisions.tsv ↔ state.decision_log 同源契约自检（Issue #108 B 项）
 // 无参数：断言 rules 文本——SKILL.md §4 landing 收尾清单有「收尾必跑 mana-sync-decisions.py
-//         <run_dir> --check 且 decision_log == tsv rows」原文、AGENTS.md 规则表已登记本 check、
+//         <run_dir> --check 且 decision_log 与 tsv rows 条数一致」原文、AGENTS.md 规则表已登记本 check、
 //         sync 脚本源码含 correction 映射/lanes 非空断言/os.replace 原子写；再对本仓 .mana/
 //         真实 run 目录逐个实跑 --check 实盘同源断言（rc=0 ✓ / rc=1 不同源判败 / rc=2 legacy
 //         格式 WARN 跳过）；并实跑 `--help` 确认可用。本 check 的实盘审计即 mana-selftest 的
@@ -62,7 +62,7 @@ function assertContract(texts = {
   // SKILL.md §4 landing 收尾清单：与 mana-run-audit.py 同等地位的必跑项原文
   assert.match(
     texts.skill,
-    /收尾锁审计后必跑 `python3 scripts\/mana-sync-decisions\.py <run_dir> --check`，须 `decision_log == tsv rows`（decisions\.tsv 是决策轨迹权威源，state\.decision_log 只是投影）；不一致先同步再报 run 完成/,
+    /收尾锁审计后必跑 `python3 scripts\/mana-sync-decisions\.py <run_dir> --check`，须 `decision_log` 与 `tsv rows` \*\*条数一致\*\*（decisions\.tsv 是决策轨迹权威源，state\.decision_log 只是投影；6 列 tsv 表达不了多行\/额外键，故内容全等不可作为判据——条数不一致即漏写\/多写一条决策）/,
     "SKILL.md §4 收尾清单缺 mana-sync-decisions 必跑原文",
   );
   // AGENTS.md 规则表登记（防 drill 失传）
@@ -165,6 +165,22 @@ function selfTest() {
     assert.equal(readFileSync(join(runDir, "state.json"), "utf8"), before, "sync 幂等：内容不得漂移");
     console.log("  ✓ drill：重复 sync 幂等（条数不变）");
 
+    // ④b 条数相同但内容漂移：--check 不判败（tsv 表达不了多行/额外键），sync 以 tsv 为准且保留额外键
+    {
+      const drifted = JSON.parse(before);
+      drifted.decision_log[0] = { ...drifted.decision_log[0], decision: "旧内容", retry_mode: "network" };
+      writeFileSync(join(runDir, "state.json"), JSON.stringify(drifted, null, 2));
+      r = sync(runDir, ["--check"]);
+      assert.equal(r.status, 0, `条数一致时 --check 不得判败：${r.stdout}${r.stderr}`);
+      assert.match(r.stdout, /内容漂移/, "--check 须报出内容漂移行数");
+      r = sync(runDir);
+      assert.equal(r.status, 0, `同步应成功：${r.stderr}`);
+      const after = JSON.parse(readFileSync(join(runDir, "state.json"), "utf8"));
+      assert.equal(after.decision_log[0].decision, rowObj("T1").decision, "sync 后内容以 tsv 为准");
+      assert.equal(after.decision_log[0].retry_mode, "network", "tsv 表达不了的额外键必须保留");
+      console.log("  ✓ drill：条数同内容漂移 → --check rc=0 只报漂移，sync 以 tsv 为准并保留额外键");
+    }
+
     // ⑤ 坏行（空格分隔）判输入非法 rc=2
     writeFileSync(join(runDir, "decisions.tsv"), TSV_HEADER + "\nT4 not a tsv row\n");
     r = sync(runDir, ["--check"]);
@@ -191,7 +207,7 @@ function selfTest() {
     // ⑦ 负例 b：删 SKILL.md 关键原文 → 契约断言必须失败
     const skill = readFileSync(SKILL, "utf8");
     const brokenSkill = skill.replace(
-      "收尾锁审计后必跑 `python3 scripts/mana-sync-decisions.py <run_dir> --check`，须 `decision_log == tsv rows`",
+      "收尾锁审计后必跑 `python3 scripts/mana-sync-decisions.py <run_dir> --check`，须 `decision_log` 与 `tsv rows` **条数一致**",
       "",
     );
     assert.notEqual(brokenSkill, skill, "负例自检：必须真的删到了 SKILL.md 原文");

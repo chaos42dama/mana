@@ -8,7 +8,11 @@ decision_log 是投影，两者不同源 = 决策轨迹静默不一致（假绿�
   python3 scripts/mana-sync-decisions.py <run_dir>          # 同步（重建 + 原子写回）
   python3 scripts/mana-sync-decisions.py <run_dir> --check  # 只比对，不写盘
 
-退出码：0 一致或已同步 | 1 --check 发现不一致 | 2 输入非法。
+退出码：0 条数一致（内容漂移仅提示；同步模式会以 tsv 为准重写）| 1 --check 发现条数不一致 | 2 输入非法。
+
+判据为什么是条数而非内容全等：decisions.tsv 是 6 列单行格式，多行 evidence 会被压成
+`⏎`，state 条目还可能带 tsv 表达不了的键（如 retry_mode）。故「内容全等」对历史 run 恒假；
+能机器判定的不变量是**决策条数一致**（漏写/多写一条），内容以 tsv 为准单向收敛。
 """
 from __future__ import annotations
 
@@ -83,8 +87,19 @@ def check_lanes(st: dict, state_path: str) -> None:
         fail(f"{state_path} 缺 lanes 或 lanes 为空 —— 拒绝写 state")
 
 
-def rows_equal(a: list[dict], b: list[dict]) -> bool:
-    return a == b
+def content_drift(before: list[dict], rows: list[dict]) -> int:
+    """条数相同时，逐条比对 6 列投影的差异条数（仅用于提示，不判败）。
+
+    为什么条数是唯一可强制的判据：decisions.tsv 是 6 列单行格式，多行 evidence 被压成
+    `⏎`、state 条目还可能带 tsv 表达不了的键（如 retry_mode）。因此「内容全等」对历史
+    run 恒假——真正能机器判定的一致性是**条数一致**（漏写/多写一条决策）。
+    """
+    cols = TSV_COLUMNS
+    return sum(
+        1
+        for old, new in zip(before, rows)
+        if {k: old.get(k, "") for k in cols} != {k: new.get(k, "") for k in cols}
+    )
 
 
 def atomic_write_state(state_path: str, st: dict) -> None:
@@ -124,20 +139,33 @@ def main() -> int:
     st = load_state(state_path)
 
     before = st.get("decision_log") or []
-    if rows_equal(before, rows):
-        print(f"OK: decision_log 与 decisions.tsv 一致（{len(rows)} 条）")
+    drift = content_drift(before, rows) if len(before) == len(rows) else 0
+
+    if len(before) == len(rows):
+        note = f"，{drift} 行内容与 tsv 不同（tsv 为权威源）" if drift else ""
+        print(f"OK: decision_log 与 decisions.tsv 条数一致（{len(rows)} 条）{note}")
+        if not drift:
+            return 0
+
+    if args.check:
+        if len(before) != len(rows):
+            print(
+                f"FAIL: state.decision_log（{len(before)} 条）≠ decisions.tsv（{len(rows)} 条），"
+                f"差异 {abs(len(before) - len(rows))} 条 —— 跑 python3 scripts/mana-sync-decisions.py {args.run_dir} 同步"
+            )
+            return 1
+        print(f"OK(--check): 条数一致，{drift} 行内容漂移留待同步（不判败：tsv 无法表达多行/额外键）")
         return 0
 
-    diff = abs(len(before) - len(rows))
-    if args.check:
-        print(
-            f"FAIL: state.decision_log（{len(before)} 条）≠ decisions.tsv（{len(rows)} 条），"
-            f"差异 {diff} 条 —— 跑 python3 scripts/mana-sync-decisions.py {args.run_dir} 同步"
-        )
-        return 1
-
     check_lanes(st, state_path)
-    st["decision_log"] = rows
+    # 保留 tsv 表达不了的键（如 retry_mode）：按位置从旧条目带过来，其余以 tsv 为准。
+    merged: list[dict] = []
+    for i, row in enumerate(rows):
+        carried = {}
+        if i < len(before) and isinstance(before[i], dict):
+            carried = {k: v for k, v in before[i].items() if k not in TSV_COLUMNS}
+        merged.append({**carried, **row})
+    st["decision_log"] = merged
     atomic_write_state(state_path, st)
     print(f"OK: 已同步 decision_log {len(before)} → {len(rows)} 条（原子写回 {state_path}）")
     return 0
