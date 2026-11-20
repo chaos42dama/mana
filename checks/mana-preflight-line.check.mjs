@@ -114,11 +114,15 @@ function buildPath(bin) {
 }
 
 function runPreflight(bin, home, { cwd = REPO, scriptPath = join(cwd, "scripts/mana-preflight.sh"), line = FAKE_DEFAULT_LINE, env: extraEnv = {} } = {}) {
+  // Issue #108：剥离父环境 run 指针（MANA_REPO/MANA_RUN_ID），防泄入合成 env
+  // 令预检读真实 .mana/<run>/state.json 与合成 HOME 假默认线不等 → 场景① 假红。
+  // ④/④b 需要真实指针，经 extraEnv 显式传入，语义不变。回归断言见组1b：删掉两个 delete 后其必失败。
+  const { MANA_REPO: _leakRepo, MANA_RUN_ID: _leakRun, ...baseEnv } = process.env;
   const r = spawnSync("bash", [scriptPath], {
     cwd,
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...baseEnv,
       HOME: home,
       MANA_SRC: REPO,
       PATH: buildPath(bin),
@@ -166,6 +170,24 @@ try {
     assert.ok(!out.includes("PREFLIGHT FAIL"), `场景① 不应有 FAIL\n${out}`);
     assert.ok(before.equals(readFileSync(join(home, ".pi/agent/settings.json"))), "场景① settings.json 必须字节不变（预检只读）");
     console.log("✓ 组1 healthy → rc=0，state=healthy drift=none，settings 只读未变");
+  }
+
+  // 组1b 回归（Issue #108）：父环境带 run 指针（Issue 复现原值；修复后已被剥离，路径是否存在无关）
+  // 时场景① 仍 PASS——删掉 runPreflight 里两个 delete 后本断言必失败。
+  {
+    process.env.MANA_REPO = "/opt/src/41490/tikoly/nrc";
+    process.env.MANA_RUN_ID = "nrc-6-wire";
+    try {
+      const line = realBaseLine();
+      const { home, bin } = setupEnv(line);
+      const { rc, out } = runPreflight(bin, home, { line });
+      assert.equal(rc, 0, `父环境带 MANA_REPO+MANA_RUN_ID 时场景① 应 PASS\n${out}`);
+      assert.ok(out.includes("state=healthy"), `父环境带指针时场景① 应仍 healthy\n${out}`);
+      console.log("✓ 组1b 父环境带 MANA_REPO+MANA_RUN_ID → 场景① 仍 PASS（指针不泄入合成 env）");
+    } finally {
+      delete process.env.MANA_REPO;
+      delete process.env.MANA_RUN_ID;
+    }
   }
 
   // 1b) 从沙箱全局 skill scripts 独立运行：无源码时 WARN 必须可见，继续自检已安装扩展并通过。
