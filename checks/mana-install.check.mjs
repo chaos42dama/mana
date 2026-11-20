@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 装机脚本契约自检（Issue #89）：映射、README 表必须相等；git 内另校验正本跟踪集。
-// --self-test 另实跑沙箱装机、幂等、条件接线，以及映射/README 各一组注入负例。
+// --self-test 另实跑沙箱装机、幂等、条件接线，以及映射/README/herdr 集成名各一组注入负例。
 import assert from "node:assert/strict";
 import {
   readFileSync,
@@ -158,6 +158,32 @@ function assertMirrorCoverage({ sourceText = script(), readmeText = readFileSync
   return tracked.size;
 }
 
+function assertHerdrIntegrationOwnership(sh, pigSource) {
+  // herdr 官方集成（`~/.pi/agent/extensions/herdr-agent-state.ts`）不是本仓安装产物：它由
+  // `herdr integration install pi` 投放并带 herdr 托管头，与本仓 pig 版同名不同物（pig 版装到
+  // `~/.pig/agent/extensions/`，走 `herdr pane report-agent` CLI 自报）。若把它塞进映射表，
+  // 装机脚本会用自己的 pig 版覆盖 herdr 官方集成 —— 静默破坏 pi lane 状态上报。
+  assert.ok(
+    !/herdr-agent-state\.ts\|\$HOME_DIR\/\.pi\//.test(sh),
+    "不得把 herdr 官方 pi 集成路径写进映射表（同名不同物，覆盖即破坏 herdr 托管）",
+  );
+  assert.ok(
+    !pigSource.includes("HERDR_INTEGRATION_ID=pi"),
+    "pig 版不得伪装 herdr 官方集成头（否则 herdr integration status 会把它当自己管的文件）",
+  );
+  assert.ok(
+    pigSource.includes("reportArgs") && pigSource.includes("--source"),
+    "pig 版走 herdr pane report-agent CLI 自报并以 --source 去重",
+  );
+  // pi 1.5.2 的 skill 根只有 `~/.pi/agent/skills` 与 `~/.agents/skills`（core/skills.js 的
+  // getAgentDir()/skills + package-manager.js 的 userAgentsSkillsDir）；`~/.pi/skills` 不被发现。
+  // 旧装机规则曾写到 `~/.pi/skills/mana/`，留下永不被读取且停在旧版的副本 —— 断言它不得回归。
+  assert.ok(
+    !/\.pi\/skills\//.test(sh),
+    "装机脚本不得写 ~/.pi/skills（pi 只发现 ~/.pi/agent/skills 与 ~/.agents/skills）",
+  );
+}
+
 function assertContract() {
   const sh = script();
   // 1) 判定口径：逐文件 cmp -s，与 preflight 装机门同口径
@@ -213,6 +239,8 @@ function assertContract() {
     pigCond === "$HOME_DIR/.pig/agent/extensions",
     `pig 条带条件目录（未装 pig 时 skip 而非报错），实际第三段: ${pigCond}`,
   );
+  // 2d) herdr 官方集成的归属断言（独立成函数，供 selfTest 注入负例）。
+  assertHerdrIntegrationOwnership(sh, readFileSync(join(REPO, "extensions/pig/herdr-agent-state.ts"), "utf8"));
   // 3) 幂等：安装前先 cmp -s 判等，相同不写
   const installBranch = sh.split("install)")[1]?.split("esac")[0] ?? "";
   assert.ok(
@@ -310,6 +338,31 @@ function selfTest() {
   const readmeDrill = readme.replace(/^\| `checks\/\*\*` \|.*$/m, "");
   assert.throws(() => assertMirrorCoverage({ sourceText: script(), readmeText: readmeDrill }));
   console.log("  ✓ 负例(b)：删除 README 的 checks 表行 → README 覆盖断言实测失败");
+
+  // 负例(c)：把 herdr 官方 pi 集成塞进映射表 → 归属断言实测失败（防装机覆盖 herdr 托管文件）
+  {
+    const pig = readFileSync(join(REPO, "extensions/pig/herdr-agent-state.ts"), "utf8");
+    const wiringDrill = script().replace(
+      /"(extensions\/pig\/herdr-agent-state\.ts\|[^"]*)"/,
+      '"extensions/pig/herdr-agent-state.ts|$HOME_DIR/.pi/agent/extensions/herdr-agent-state.ts|"',
+    );
+    assert.throws(
+      () => assertHerdrIntegrationOwnership(wiringDrill, pig),
+      "负例(c) 必须失败",
+    );
+    // 负例(d)：pig 版伪装 herdr 官方集成头 → 同一断言实测失败
+    assert.throws(
+      () => assertHerdrIntegrationOwnership(script(), "// HERDR_INTEGRATION_ID=pi\n"),
+      "负例(d) 必须失败",
+    );
+    // 负例(e)：装机脚本把技能写回 `~/.pi/skills/`（pi/pig 均不发现的死路径）→ 断言实测失败
+    const legacyDrill = script().replace(
+      /"(extensions\/pig\/herdr-agent-state\.ts\|[^"]*)"/,
+      '"skills/mana/SKILL.md|$HOME_DIR/.pi/skills/mana/SKILL.md|"',
+    );
+    assert.throws(() => assertHerdrIntegrationOwnership(legacyDrill, pig), "负例(e) 必须失败");
+    console.log("  ✓ 负例(c)(d)(e)：映射表塞入 herdr 官方 pi 路径 / pig 版伪装集成头 / 技能写回 ~/.pi/skills → 归属断言实测失败");
+  }
 
   const home = mkdtempSync(join(tmpdir(), "mana-install-drill-"));
   const env = { HOME: home };

@@ -71,7 +71,7 @@ bash scripts/mana-install.sh --check
 bash scripts/mana-install.sh --dry-run
 ```
 
-脚本按下表同步两组安装产物：**正本仓布局镜像**供仓内契约检查与全仓自检，**技能根落位**供 OMP 加载技能及其 references。两组都由同一正本映射生成，不手抄副本；`cmp -s` 判定，与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同口径；目录内新增文件自动纳入，脚本保留正本执行位。映射源集、完整目标集、此表及 `git ls-files` 正本跟踪集由 `checks/mana-install.check.mjs` 机械断言；镜像集明确排除 `.gitignore`。安装产物内可跑 `--quick`；其中跟踪集覆盖率子断言在非 git 上下文打印 WARN 并跳过，正本仓内全量强制。不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥：
+脚本按下表同步两组安装产物：**正本仓布局镜像**供仓内契约检查与全仓自检，**技能根落位**供 OMP 加载技能及其 references。两组都由同一正本映射生成，不手抄副本；`cmp -s` 判定，与全局 `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` 装机门同口径；目录内新增文件自动纳入，脚本保留正本执行位。映射源集、完整目标集、此表及 `git ls-files` 正本跟踪集由 `checks/mana-install.check.mjs` 机械断言；镜像集明确排除 `.gitignore`。安装产物内可跑 `--quick`；其中跟踪集覆盖率子断言在非 git 上下文打印 WARN 并跳过，正本仓内全量强制。不触碰 `settings.json` / `models.json` / `auth.json` / `~/.omp/agent/config.yml` 等配置与密钥。**仓根新增的任何被跟踪文件都会进镜像**——`pi-warden.md` 这类工具残留一旦 `git add`，会让「主镜像源覆盖正本跟踪集」断言失败且被装进全局技能目录，故不得留在仓根（处置见 `AGENTS.md` 规则表）：
 
 **正本仓布局镜像**（保留仓内相对路径）：
 
@@ -107,6 +107,8 @@ bash scripts/mana-install.sh --dry-run
 | `extensions/pig/herdr-agent-state.ts` | `~/.pig/agent/extensions/herdr-agent-state.ts`（父目录存在时） |
 
 所有目标均由装机脚本从同一正本同步。
+
+**不在装机集内（勿手工合并）**：`~/.pi/agent/extensions/herdr-agent-state.ts` 由 `herdr integration install pi` 投放、文件头带 `HERDR_INTEGRATION_ID=pi` 托管标记；它与上表 pig 版**同名不同物**——pig 版装到 `~/.pig/agent/extensions/`、走 `herdr pane report-agent` CLI 自报。两者路径不同、内容不同，是两条线路各自的实现；把任一方搬到另一方路径会静默破坏对应线路的状态上报。`checks/mana-install.check.mjs` 对此有正负断言（映射表不得出现该官方路径、pig 版不得伪装托管头）。
 
 **预检源与目标仓**：`MANA_SRC` 指定扩展正本源，缺省按 `MANA_SRC` → 当前仓 `git-common-dir` 候选 → 完整镜像目录解析；镜像同时含 `extensions/` 与 `checks/` 时，它就是默认源，无需设置 `MANA_SRC`，预检会跑全装机门与 `mana-selftest.sh --quick`。镜像不完整时保留可见 `WARN`，降级为已安装扩展自检。`MANA_REPO` 指定 run-state 所属目标仓，缺省解析当前工作目录的 git 根。
 
