@@ -90,6 +90,14 @@ MAPPINGS+=(
   "extensions/mana-compact.ts|$HOME_DIR/.omp/agent/extensions/mana-compact.ts|"
   "extensions/pig/herdr-agent-state.ts|$HOME_DIR/.pig/agent/extensions/herdr-agent-state.ts|$HOME_DIR/.pig/agent/extensions"
 )
+# pig lane 工人侧四扩展（#120）：pig 只从 `~/.pig/agent/extensions` 与受信 `.pig/extensions` 加载，
+# **永不从 `~/.pi` 读**（pig docs extensions D2）。此前只装了 herdr 自报扩展，工人侧四份落在
+# `~/.pi/agent/extensions/` 里对 pig 完全不可见 —— MANA_WORKER 禁言、越界拦截、反射断路器、
+# safe-guard 硬拦、compact 协议块全失效，而 preflight 的 pig 门只查 herdr 那条，照报绿。
+# 四条与 pi 侧同源、装到 pig 目录；cond 段同 herdr 条：未装 pig 的机器 skip 不报错。
+for _pig_worker in mana-worker.ts mana-worker-compact.ts precommit-review.ts safe-guard.ts; do
+  MAPPINGS+=("extensions/pi/$_pig_worker|$HOME_DIR/.pig/agent/extensions/$_pig_worker|$HOME_DIR/.pig/agent/extensions")
+done
 
 hash_of() { sha256sum "$1" 2>/dev/null | cut -c1-12; }
 

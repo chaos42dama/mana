@@ -283,8 +283,21 @@ fi
 # 若在这里 FAIL 会把无 pig 机器挡死在预检。装了 pig 才要求扩展装机与自检（与装机门同语义）。
 # 扩展路径沿装机门的用户级惯例，并尊重 pig 官方 PIG_HOME 覆盖（也供阴性测试注入三态）。
 if command -v pig >/dev/null 2>&1; then
-  PIG_EXT="${PIG_HOME:-$HOME/.pig}/agent/extensions/herdr-agent-state.ts"
+  PIG_EXT_DIR="${PIG_HOME:-$HOME/.pig}/agent/extensions"
+  PIG_EXT="$PIG_EXT_DIR/herdr-agent-state.ts"
   [ -f "$PIG_EXT" ] || FAIL "pig 门: 缺 $PIG_EXT（先运行 bash '$SCRIPT_DIR/mana-install.sh'）"
+  # 工人侧四扩展（#120）：pig 只从 `$PIG_HOME/agent/extensions` 加载、永不读 `~/.pi`（pig docs D2），
+  # 所以这四份必须独立落在 pig 目录；缺任一份，MANA_WORKER 禁言/越界拦截/反射断路器/safe-guard
+  # 硬拦/compact 协议块在 pig lane 就全失效，而只查 herdr 那一份会照报绿（假绿）。
+  # 漂移比口径复用自检门的 `_pi_source`：正本仓时指向 extensions/pi，安装态指向已装 pi 目录，
+  # 两种运行环境都能比（分 HAS_EXTENSION_SOURCE 两支会让安装态的四份 pig 副本无对照）。
+  for _pig_worker in mana-worker.ts mana-worker-compact.ts precommit-review.ts safe-guard.ts; do
+    [ -f "$PIG_EXT_DIR/$_pig_worker" ] ||
+      FAIL "pig 门: 缺 $PIG_EXT_DIR/$_pig_worker（先运行 bash '$SCRIPT_DIR/mana-install.sh'）"
+    cmp -s "$_pi_source/$_pig_worker" "$PIG_EXT_DIR/$_pig_worker" ||
+      WARN "pig 门: 漂移 $PIG_EXT_DIR/$_pig_worker 与 $_pi_source 版不同（功能以自检实跑为准）"
+  done
+  OK "pig 门: 工人侧四扩展在位（$PIG_EXT_DIR）"
   if command -v node >/dev/null 2>&1; then
     # 自检走扩展入口 reportArgs()，断言两条：
     # ① --source=pig:herdr-state 与 --agent-session-path 在位：herdr 按 source 去重/归属集成，按 session path 关联会话文件，缺任一则上报对不上账；

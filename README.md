@@ -105,6 +105,10 @@ bash scripts/mana-install.sh --dry-run
 | `extensions/safe-guard.ts` | `~/.omp/agent/extensions/safe-guard.ts` |
 | `extensions/mana-compact.ts` | `~/.omp/agent/extensions/mana-compact.ts` |
 | `extensions/pig/herdr-agent-state.ts` | `~/.pig/agent/extensions/herdr-agent-state.ts`（父目录存在时） |
+| `extensions/pi/mana-worker.ts` | `~/.pig/agent/extensions/mana-worker.ts`（父目录存在时） |
+| `extensions/pi/mana-worker-compact.ts` | `~/.pig/agent/extensions/mana-worker-compact.ts`（父目录存在时） |
+| `extensions/pi/precommit-review.ts` | `~/.pig/agent/extensions/precommit-review.ts`（父目录存在时） |
+| `extensions/pi/safe-guard.ts` | `~/.pig/agent/extensions/safe-guard.ts`（父目录存在时） |
 
 所有目标均由装机脚本从同一正本同步。
 
@@ -153,7 +157,9 @@ bash scripts/mana-install.sh
 
 脚本的 cond 语义保证：`~/.pig/agent/extensions/` 不存在时该条目显示 `skip（父目录不存在）` 并继续，不报错。
 
-**验证**：跑 `bash ~/.omp/agent/skills/mana/scripts/mana-preflight.sh`，看输出里 `pig 门:` 那一行——扩展在位且 `reportArgs()` 自检绿即 `ok`。注意：**preflight 只发现并报错，不负责安装**；发现缺失时回到上一条用装机脚本修复。
+pig 侧共装**五份**：`herdr-agent-state.ts`（状态自报）+ 工人侧 `mana-worker.ts`、`mana-worker-compact.ts`、`precommit-review.ts`、`safe-guard.ts`。后四份是必需项——pig 只从 `$PIG_HOME/agent/extensions` 与受信 `.pig/extensions` 加载、**永不读 `~/.pi`**（`pig docs show extensions` D2），所以 `~/.pi/agent/extensions/` 里那份对 pig lane 完全不可见；缺任一份，`MANA_WORKER` 交互禁言、`MANA_LANE_ALLOW_PATHS` 越界拦截、反射断路器、safe-guard 受保护路径硬 block、compact 协议块保留在 pig lane 就都不生效。
+
+**验证**：跑 `bash ~/.omp/agent/skills/mana/scripts/mana-preflight.sh`，看输出里 `pig 门:` 两行——`工人侧四扩展在位` 与 `herdr-agent-state.ts 在位且 reportArgs 自检绿` 同时 `ok` 才算过；缺任一份即 `PREFLIGHT FAIL: pig 门: 缺 …` 并点名文件。注意：**preflight 只发现并报错，不负责安装**；发现缺失时回到上一条用装机脚本修复。`pig status` 的 `health` 字段不可作加载判据——它对语法错误的扩展仍报 `health=''`、`enabled=true`。
 
 **未装 pig**：该门 SKIP 不拦，`/mana run` 照常只用 pi 工人跑完。
 
