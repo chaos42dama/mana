@@ -65,11 +65,14 @@ function buildPath(bin, opts = {}) {
 }
 
 function runPreflight(bin, home, { withPig = false, env: extraEnv = {} } = {}) {
+  // Issue #108：剥离父环境 run 指针（MANA_REPO/MANA_RUN_ID），防泄入合成 env
+  // 令预检按真实仓库/run 判门 → 场景① 假红。回归断言见组1b：删掉两个 delete 后其必失败。
+  const { MANA_REPO: _leakRepo, MANA_RUN_ID: _leakRun, ...baseEnv } = process.env;
   const r = spawnSync("bash", ["scripts/mana-preflight.sh"], {
     cwd: REPO,
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...baseEnv,
       HOME: home,
       PATH: buildPath(bin, { withPig }),
       MANA_AUTONOMOUS: "1",
@@ -91,6 +94,23 @@ try {
   assert.ok(out.includes("PREFLIGHT PASS"), `场景① 应有 PASS 尾行\n${out}`);
   assert.ok(!out.includes("PREFLIGHT FAIL"), `场景① 不应有 FAIL\n${out}`);
   console.log("✓ 组1 pig 未安装 → SKIP，整体 PASS");
+}
+
+// 组1b 回归（Issue #108）：父环境带 run 指针（Issue 复现原值；修复后已被剥离，路径是否存在无关）
+// 时场景① 仍 PASS——删掉 runPreflight 里两个 delete 后本断言必失败。
+{
+  process.env.MANA_REPO = "/opt/src/41490/tikoly/nrc";
+  process.env.MANA_RUN_ID = "nrc-6-wire";
+  try {
+    const { home, bin } = setupEnv();
+    const { rc, out } = runPreflight(bin, home);
+    assert.equal(rc, 0, `父环境带 MANA_REPO+MANA_RUN_ID 时场景① 应 PASS\n${out}`);
+    assert.ok(out.includes("PREFLIGHT PASS"), `父环境带指针时场景① 应 PASS 尾行\n${out}`);
+    console.log("✓ 组1b 父环境带 MANA_REPO+MANA_RUN_ID → 场景① 仍 PASS（指针不泄入合成 env）");
+  } finally {
+    delete process.env.MANA_REPO;
+    delete process.env.MANA_RUN_ID;
+  }
 }
 
 // 2) pig 在位但扩展缺失（.pig/agent/extensions 为空）→ FAIL pig 门，整体非 0
