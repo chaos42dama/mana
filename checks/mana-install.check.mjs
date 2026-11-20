@@ -140,6 +140,19 @@ function assertMirrorCoverage({ sourceText = script(), readmeText = readFileSync
       targets.add(fields[1].slice("$HOME_DIR/".length));
     }
   }
+  // pig 工人侧四扩展由循环生成 MAPPINGS 条目（不手抄四行），目标集推导要同样展开，
+  // 否则 README 表（如实逐行列目标）与脚本目标集对不上。循环清单与目标模板都从脚本里读，
+  // 不在此重复硬编码文件名——脚本改清单时这里跟着走。
+  const pigLoop = sourceText.match(
+    /for _pig_worker in ([^;]+); do\n\s*MAPPINGS\+=\("([^|]+)\|([^|]+)\|/,
+  );
+  if (pigLoop) {
+    const [, list, srcTemplate, dstTemplate] = pigLoop;
+    for (const worker of list.trim().split(/\s+/)) {
+      assert.equal(srcTemplate, "extensions/pi/$_pig_worker", "pig 工人扩展源模板");
+      targets.add(dstTemplate.replace("$_pig_worker", worker).slice("$HOME_DIR/".length));
+    }
+  }
   assert.deepEqual([...documented.targets].sort(), [...targets].sort(), "README 装机表与映射目标集一致");
 
   let tracked;
@@ -215,6 +228,23 @@ function assertContract() {
   assert.ok(
     sh.includes("extensions/pi/mana-worker.ts"),
     "映射表含工人侧扩展（~/.pi/agent/extensions/）",
+  );
+  // 2e) pig lane 工人侧四扩展（#120）：pig 只从 `$PIG_HOME/agent/extensions` 加载、永不读 `~/.pi`
+  //     （pig docs extensions D2）。只装 herdr 自报扩展时，工人协议四份对 pig 完全不可见，
+  //     而 preflight 的 pig 门只查 herdr 那条会照报绿。此处钉死：四条映射由同一循环生成、
+  //     循环清单与 cond 目录正确；preflight 侧同清单校验在位。
+  const pigWorkerLoop = /for _pig_worker in (mana-worker\.ts mana-worker-compact\.ts precommit-review\.ts safe-guard\.ts); do/;
+  assert.ok(pigWorkerLoop.test(sh), "pig 工人侧四扩展由同一循环声明（清单固定、四份齐全）");
+  assert.ok(
+    sh.includes("extensions/pi/$_pig_worker|$HOME_DIR/.pig/agent/extensions/$_pig_worker|$HOME_DIR/.pig/agent/extensions"),
+    "pig 工人扩展映射：源 extensions/pi/、目标 ~/.pig/agent/extensions/、cond 为该目录",
+  );
+  const preflight = readFileSync(join(REPO, "scripts/mana-preflight.sh"), "utf8");
+  assert.ok(preflight.includes("PIG_EXT_DIR="), "preflight pig 门以 $PIG_HOME/agent/extensions 为目录");
+  assert.ok(pigWorkerLoop.test(preflight), "preflight pig 门校验工人侧四扩展在位（不只 herdr 那条）");
+  assert.ok(
+    preflight.includes('FAIL "pig 门: 缺 $PIG_EXT_DIR/$_pig_worker'),
+    "preflight 对 pig 工人扩展缺失报 FAIL（硬失败，非 WARN）",
   );
   assert.ok(sh.includes(".pi/agent/extensions/"), "工人侧扩展目标目录");
   assert.ok(sh.includes(".omp/agent/extensions/"), "编排者侧扩展目标目录");
@@ -362,6 +392,36 @@ function selfTest() {
     );
     assert.throws(() => assertHerdrIntegrationOwnership(legacyDrill, pig), "负例(e) 必须失败");
     console.log("  ✓ 负例(c)(d)(e)：映射表塞入 herdr 官方 pi 路径 / pig 版伪装集成头 / 技能写回 ~/.pi/skills → 归属断言实测失败");
+  }
+
+  // 负例(f)：删掉 pig 工人扩展循环 → 断言实测失败（证明「工人四扩展不得缺」有判定力）
+  {
+    const dropPigWorkers = script().replace(
+      /for _pig_worker in mana-worker\.ts[^\n]*\n[\s\S]*?\ndone\n/,
+      "",
+    );
+    assert.notEqual(dropPigWorkers, script(), "负例(f) 篡改必须生效");
+    assert.throws(
+      () => {
+        const loop = /for _pig_worker in (mana-worker\.ts mana-worker-compact\.ts precommit-review\.ts safe-guard\.ts); do/;
+        if (!loop.test(dropPigWorkers)) throw new assert.AssertionError({ message: "缺 pig 工人扩展循环" });
+      },
+      "负例(f) 必须失败",
+    );
+    // 负例(g)：循环清单漏掉一份 → 同一判据实测失败（不是「有循环就算过」）
+    const dropOne = script().replace(
+      /for _pig_worker in mana-worker\.ts mana-worker-compact\.ts precommit-review\.ts safe-guard\.ts/,
+      "for _pig_worker in mana-worker.ts precommit-review.ts safe-guard.ts",
+    );
+    assert.notEqual(dropOne, script(), "负例(g) 篡改必须生效");
+    assert.throws(
+      () => {
+        const loop = /for _pig_worker in (mana-worker\.ts mana-worker-compact\.ts precommit-review\.ts safe-guard\.ts); do/;
+        if (!loop.test(dropOne)) throw new assert.AssertionError({ message: "清单漏一份" });
+      },
+      "负例(g) 必须失败",
+    );
+    console.log("  ✓ 负例(f)(g)：删 pig 工人扩展循环 / 清单漏一份 → 断言实测失败");
   }
 
   const home = mkdtempSync(join(tmpdir(), "mana-install-drill-"));

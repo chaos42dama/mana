@@ -48,5 +48,7 @@
 | 仓根未跟踪文件被当成「无害残留」：一旦 `git add` 即进装机镜像（跟踪集覆盖全部仓根文件），既让 `mana-install.check.mjs` 失败，又把工具残留装进全局技能目录 | `checks/mana-install.check.mjs`（`主镜像源覆盖正本跟踪集` 断言：仓根新增被跟踪文件即失败）+ 本节处置口径 | #118 |
 | herdr 官方 pi 集成 `~/.pi/agent/extensions/herdr-agent-state.ts`（`herdr integration install pi` 投放、带 `HERDR_INTEGRATION_ID=pi` 托管头）与仓内 `extensions/pig/herdr-agent-state.ts` 同名不同物，合并任一方向即静默破坏对应线路状态上报 | `checks/mana-install.check.mjs` 的 `assertHerdrIntegrationOwnership`（映射表不得含官方路径、pig 版不得伪装托管头、pig 版走 `report-agent`）+ `--self-test` 负例(c)(d)(e) | #118 |
 | `~/.pi/skills/` 不是 pi/omp 的 skill 根（pi 1.5.2 只读 `~/.pi/agent/skills` 与 `~/.agents/skills`；pig 读 `~/.agents/skills`），旧装机规则残留的副本永不被加载却停在旧版，会让「在用指令集是否最新」判断失真 | `checks/mana-install.check.mjs`（装机脚本不得出现 `.pi/skills/`）+ 实测判据：`~/.agents/skills/mana/SKILL.md` 与正本 `sha256` 相等 | #118 |
+| pig lane 工人侧四扩展未装机（#120）：pig 只从 `$PIG_HOME/agent/extensions` 与受信 `.pig/extensions` 加载、**永不读 `~/.pi`**（pig docs D2）；只装 herdr 自报扩展时工人协议四份对 pig 不可见，而 pig 门只查 herdr 那条会照报绿（假绿） | `scripts/mana-install.sh`（四条 cond 映射，同一循环声明）+ `scripts/mana-preflight.sh` pig 门（五份在位硬 FAIL + 四份 `cmp` 漂移 WARN）+ `checks/mana-install.check.mjs`（映射/README 目标集/负例(f)(g)）+ `checks/preflight-pig-gate.check.mjs` 组3b（漏一份必 FAIL 并点名） | #120 |
+| `pig status` 的 `health` 字段不可作扩展加载判据：对语法错误的扩展仍报 `health=''`、`enabled=true`；判断「扩展真的可用」只能靠 preflight 门的在位+cmp+自检实跑，或 pig lane 内实跑 | `scripts/mana-preflight.sh` pig 门（在位 + `cmp -s` + `reportArgs` 自检）；README pig 节明示该字段不可用 | #120 |
 
 新增检查请登记到本表（文件名 + 断言范围），防 drill 失传。

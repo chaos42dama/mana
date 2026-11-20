@@ -50,6 +50,16 @@ function setupEnv() {
   return { home, bin };
 }
 
+// pig 工人侧四扩展（#120）：pig 只从 `$PIG_HOME/agent/extensions` 加载，永不读 `~/.pi`。
+// 组3/4 要过 pig 门就必须同时备齐这四份，组4b 故意漏一份证明门会硬失败。
+const PIG_WORKERS = ["mana-worker.ts", "mana-worker-compact.ts", "precommit-review.ts", "safe-guard.ts"];
+function installPigWorkers(home, { skip = null } = {}) {
+  for (const f of PIG_WORKERS) {
+    if (f === skip) continue;
+    cpSync(join(REPO, "extensions/pi", f), join(home, ".pig/agent/extensions", f));
+  }
+}
+
 // PATH = 假 bin + 真实 PATH 剔除真实 pig 所在目录（屏蔽本机 pig/herdr；假 herdr 已兜住 a 门）
 function buildPath(bin, opts = {}) {
   const realDirs = (process.env.PATH || "").split(":").filter(Boolean);
@@ -126,18 +136,39 @@ try {
   console.log("✓ 组2 pig 在位缺扩展 → FAIL，整体非 0");
 }
 
-// 3) pig 在位 + repo 扩展装入临时 HOME 的 .pig → 自检绿，整体 PASS
+// 3) pig 在位 + repo 扩展装入临时 HOME 的 .pig（herdr 自报 + 工人四扩展）→ 自检绿，整体 PASS
 {
   const { home, bin } = setupEnv();
   cpSync(
     join(REPO, "extensions/pig/herdr-agent-state.ts"),
     join(home, ".pig/agent/extensions/herdr-agent-state.ts"),
   );
+  installPigWorkers(home);
   const { rc, out } = runPreflight(bin, home, { withPig: true });
   assert.equal(rc, 0, `场景③ 应 PASS\n${out}`);
-  assert.ok(out.includes("pig 门: herdr-agent-state.ts 在位且 reportArgs 自检绿"), `场景③ 应有 OK 行\n${out}`);
+  assert.ok(out.includes("pig 门: 工人侧四扩展在位"), `场景③ 应有四扩展 OK 行\n${out}`);
+  assert.ok(out.includes("pig 门: herdr-agent-state.ts 在位且 reportArgs 自检绿"), `场景③ 应有 herdr OK 行\n${out}`);
   assert.ok(out.includes("PREFLIGHT PASS"), `场景③ 应有 PASS 尾行\n${out}`);
   console.log("✓ 组3 pig 在位扩展在位 → 自检绿，整体 PASS");
+}
+
+// 3b) 工人四扩展漏一份（#120）→ FAIL，整体非 0；且失败原因点名缺的那份。
+//     这是修前假绿的复现点：只装 herdr 自报扩展时旧门照报 ok。
+{
+  const { home, bin } = setupEnv();
+  cpSync(
+    join(REPO, "extensions/pig/herdr-agent-state.ts"),
+    join(home, ".pig/agent/extensions/herdr-agent-state.ts"),
+  );
+  installPigWorkers(home, { skip: "precommit-review.ts" });
+  const { rc, out } = runPreflight(bin, home, { withPig: true });
+  assert.notEqual(rc, 0, `场景③b 应非 0\n${out}`);
+  assert.ok(
+    out.includes("PREFLIGHT FAIL: pig 门: 缺") && out.includes("precommit-review.ts"),
+    `场景③b 应点名缺 precommit-review.ts\n${out}`,
+  );
+  assert.ok(!out.includes("PREFLIGHT PASS"), `场景③b 不应 PASS\n${out}`);
+  console.log("✓ 组3b pig 工人四扩展漏一份 → FAIL 且点名缺项（修前假绿的回归断言）");
 }
 
 // 4) pig 在位 + 扩展在位但自检失败（假 node exit 1 屏蔽真 node，首目录优先）→ FAIL，整体非 0。
@@ -149,6 +180,7 @@ try {
     join(REPO, "extensions/pig/herdr-agent-state.ts"),
     join(home, ".pig/agent/extensions/herdr-agent-state.ts"),
   );
+  installPigWorkers(home);
   const brokenNode = join(bin, "node");
   writeFileSync(brokenNode, "#!/usr/bin/env bash\nexit 1\n");
   chmodSync(brokenNode, 0o755);
@@ -174,4 +206,4 @@ try {
 } finally {
   rmSync(SCRATCH, { recursive: true, force: true });
 }
-console.log("✓ preflight pig 门三态校验通过（5 组断言）");
+console.log("✓ preflight pig 门校验通过（6 组断言）");
