@@ -117,7 +117,15 @@ function runPreflight(bin, home, { cwd = REPO, scriptPath = join(cwd, "scripts/m
   // Issue #108：剥离父环境 run 指针（MANA_REPO/MANA_RUN_ID），防泄入合成 env
   // 令预检读真实 .mana/<run>/state.json 与合成 HOME 假默认线不等 → 场景① 假红。
   // ④/④b 需要真实指针，经 extraEnv 显式传入，语义不变。回归断言见组1b：删掉两个 delete 后其必失败。
-  const { MANA_REPO: _leakRepo, MANA_RUN_ID: _leakRun, ...baseEnv } = process.env;
+  // Issue #117（D4）：MANA_PREFLIGHT_SKIP_SMOKE 同理剥离——宿主设了它，场景①②③ 的线路门机读行
+  // 会变成 state=skipped（冒烟未跑），与断言 state=healthy/capacity/unavailable 不符成假红。
+  // 只放宽场景① 断言不够：②③ 依赖真冒烟才能得出 capacity/unavailable，必须从源头剥离。
+  const {
+    MANA_REPO: _leakRepo,
+    MANA_RUN_ID: _leakRun,
+    MANA_PREFLIGHT_SKIP_SMOKE: _leakSkipSmoke,
+    ...baseEnv
+  } = process.env;
   const r = spawnSync("bash", [scriptPath], {
     cwd,
     encoding: "utf8",
@@ -165,6 +173,8 @@ try {
     const before = readFileSync(join(home, ".pi/agent/settings.json"));
     const { rc, out } = runPreflight(bin, home, { line });
     assert.equal(rc, 0, `场景① 应 PASS\n${out}`);
+    // 场景①：runPreflight 已剥离宿主 MANA_PREFLIGHT_SKIP_SMOKE，故真跑冒烟，state 必为 healthy。
+    // 若剥离失效（宿主带 SKIP_SMOKE=1），机读行会变成 state=skipped，此断言即红。
     assert.ok(out.includes(`线路门: state=healthy drift=none line=${line}`), `场景① 应有机读行\n${out}`);
     assert.ok(out.includes("PREFLIGHT PASS"), `场景① 应有 PASS 尾行\n${out}`);
     assert.ok(!out.includes("PREFLIGHT FAIL"), `场景① 不应有 FAIL\n${out}`);

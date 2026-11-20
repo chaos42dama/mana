@@ -51,12 +51,33 @@ if (listOnly) {
 }
 
 const TIMEOUT_MS = 60_000; // 每项 60s；超时标 ✗ timeout，不挂死
+// Issue #117 env 白名单：子检查不得全量继承宿主环境。宿主 MANA_SRC=/tmp 会让 pig-gate 假红、
+// MANA_PREFLIGHT_SKIP_SMOKE=1 会让线路门机读行变 state=skipped、MANA_SELFTEST_ACTIVE=1 会让
+// 契约面静默跳过——同一 check 在不同宿主上给出不同结论。只透传与 mana 业务无关的运行必需量，
+// MANA_* / PI_* / HERDR_* 一律不传（四个 MANA_*_CONTRACT_SKILL 钩子仍在，只是不再被宿主透传）。
+const ENV_ALLOW = new Set([
+  "PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "TZ", "USER", "LOGNAME", "SHELL", "PWD", "TERM",
+]);
+const ENV_ALLOW_PREFIX = ["NODE_", "BUN_"]; // 运行时自身调参变量（NODE_OPTIONS 等）
+const childEnv = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([k]) => ENV_ALLOW.has(k) || ENV_ALLOW_PREFIX.some((p) => k.startsWith(p)),
+  ),
+);
+// Issue #117：递归守卫变量必须继续向下传——它不是宿主污染面，而是调用链内部控制信号。
+// 剥掉它会让 mana-preflight.sh → mana-selftest.sh → all.check → line-check → preflight 的
+// 环切断失效，导致无限递归（实测 pstree 确认）。仅透传这一个；MANA_PREFLIGHT_SKIP_SMOKE
+// 仍被剥掉（它确实是宿主污染面，D4 已在源头剥离，白名单再兜一层）。
+if ("MANA_SELFTEST_ACTIVE" in process.env) {
+  childEnv.MANA_SELFTEST_ACTIVE = process.env.MANA_SELFTEST_ACTIVE;
+}
 let failed = 0;
 for (const { file, label, extraArgs } of items) {
   const name = `${file} × ${label}`;
   const r = spawnSync(process.execPath, [join(checksDir, file), ...extraArgs], {
     timeout: TIMEOUT_MS,
     encoding: "utf8",
+    env: childEnv,
   });
   if (r.status === 0) {
     console.log(`✓ ${name}`);

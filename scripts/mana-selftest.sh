@@ -90,7 +90,16 @@ for e in "${STEPS[@]}"; do
   cmd="${rest%%|*}"
   tool="${rest##*|}"
   if [ "$name" = "contracts" ] && [ "$NESTED" = "1" ]; then
-    echo "SKIP contracts（检测到 MANA_SELFTEST_ACTIVE：本进程已在另一自检的子进程里，重跑会经 pig-gate check 反向调回预检成环；契约回归面由上层自检承担${FORCE:+，--force-contracts 已被嵌套标记否决}）"
+    # 嵌套态不能真跑契约（会经 pig-gate check 反向调回预检成环）。不带 --force-contracts 时
+    # SKIP 是预期（环切断）；但带 force 说明调用方明确要求真跑，此诉求在嵌套态不可满足，
+    # 不得静默 SKIP 后报 0（那是「要求真跑却很报绿」）。
+    if [ "$FORCE" = "1" ]; then
+      FAILED=1
+      RAN=$((RAN + 1))
+      echo "✗ contracts（嵌套态无法真跑契约：祖先已有 selftest/all.check 在跑；--force-contracts 在此不可满足）"
+      continue
+    fi
+    echo "SKIP contracts（检测到 MANA_SELFTEST_ACTIVE：本进程已在另一自检的子进程里，重跑会经 pig-gate check 反向调回预检成环；契约回归面由上层自检承担）"
     continue
   fi
   if ! have "$tool"; then

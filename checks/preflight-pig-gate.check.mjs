@@ -80,13 +80,21 @@ function buildPath(bin, opts = {}) {
 function runPreflight(bin, home, { withPig = false, env: extraEnv = {} } = {}) {
   // Issue #108：剥离父环境 run 指针（MANA_REPO/MANA_RUN_ID），防泄入合成 env
   // 令预检按真实仓库/run 判门 → 场景① 假红。回归断言见组1b：删掉两个 delete 后其必失败。
-  const { MANA_REPO: _leakRepo, MANA_RUN_ID: _leakRun, ...baseEnv } = process.env;
+  // Issue #117（D1）：MANA_SRC 同理剥离，并显式指向 REPO——宿主 `MANA_SRC=/tmp` 会让预检
+  // 源解析门判 /tmp 缺 extensions/pi/mana-worker.ts 而 FAIL，与 mana-preflight-line.check.mjs:127 对齐。
+  const {
+    MANA_REPO: _leakRepo,
+    MANA_RUN_ID: _leakRun,
+    MANA_SRC: _leakSrc,
+    ...baseEnv
+  } = process.env;
   const r = spawnSync("bash", ["scripts/mana-preflight.sh"], {
     cwd: REPO,
     encoding: "utf8",
     env: {
       ...baseEnv,
       HOME: home,
+      MANA_SRC: REPO, // 合成 env 只认本仓正本，不继承宿主的 MANA_SRC
       PATH: buildPath(bin, { withPig }),
       MANA_AUTONOMOUS: "1",
       HERDR_ENV: "1",

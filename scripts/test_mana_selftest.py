@@ -80,6 +80,17 @@ class ManaSelftestTest(unittest.TestCase):
         )
         self.assertIn("ALL-5-rc=0", r.stdout)
 
+    def test_force_contracts_at_nested_fails(self):
+        # Issue #117（D2）：--force-contracts 是顶层显式意图。嵌套态无法真跑（会成环），
+        # 但不得静默 SKIP 后报 0——那是「要求真跑却很报绿」。
+        r = run(
+            ["bash", str(SCRIPT), "--quick", "--force-contracts"],
+            {"MANA_SELFTEST_ACTIVE": "1"},
+        )
+        self.assertNotEqual(r.returncode, 0, "嵌套 + force 必须非 0")
+        self.assertIn("✗ contracts", r.stdout)
+        self.assertIn("ALL-5-rc=1", r.stdout)
+
     def test_negative_extra_cmd_makes_selftest_fail(self):
         r = run(["bash", str(SCRIPT), "--quick"], {"MANA_SELFTEST_EXTRA_CMD": "false"})
         self.assertNotEqual(r.returncode, 0, "负例必须真非 0（防永真负例）")
