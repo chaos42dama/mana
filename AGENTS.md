@@ -43,5 +43,6 @@
 | 执行期黑盒与死循环/越界写（连续 3 次报错反射、连续 6 次 `stalled_loop`、`MANA_LANE_ALLOW_PATHS` 事前拦截、多 lane 共享契约与 handoff） | `extensions/pi/mana-worker.ts` + `scripts/check-mana-issue.py` + `checks/mana-worker-reflex.check.mjs`（无参契约断言 + `--self-test` 合成 drill 与负例） | ipi#224 |
 | 契约检查继承父环境 `MANA_REPO`/`MANA_RUN_ID`（合成线路被真实 run state 误杀，假红；A 项 BASE_ENV 隔离） | `checks/mana-preflight-line.check.mjs` + `checks/preflight-pig-gate.check.mjs`（构造合成环境时剥离 run 指针 + 回归断言） | #108 |
 | decisions.tsv 与 state.decision_log 不同源（两处都可当"全部决策"来读，假绿；tsv 为权威源） | `scripts/mana-sync-decisions.py`（--check 只比对 + 原子重建）+ `checks/mana-decisions-sync.check.mjs`（无参契约断言 + `.mana` 实盘审计 + `--self-test` drill 与负例）+ SKILL §4 收尾必跑 | #108 |
+| 依赖 `.mana/` 实盘数据的契约在 worktree 里假绿（`.mana/` 被 ignore 不存在 → 审计静默跳过却宣称通过，合入主干才红） | `checks/mana-decisions-sync.check.mjs`（无 `.mana/` 时打 `SKIP` 并在末行报审计 run 数）；此类契约必须在正本仓验证，不得只在 lane worktree 跑 | #108（同 run 复发一次：PR #110 → #111） |
 
 新增检查请登记到本表（文件名 + 断言范围），防 drill 失传。
