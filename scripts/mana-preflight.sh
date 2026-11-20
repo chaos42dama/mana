@@ -226,7 +226,14 @@ SELFTESTS=(
   "MANA_COMPACT_SELFTEST=1 bun '$_omp_source/mana-compact.ts'"
 )
 if [ "$HAS_FULL_SOURCE" -eq 1 ] && [ -f "$SOURCE_ROOT/checks/all.check.mjs" ] && [ -f "$SOURCE_ROOT/scripts/mana-selftest.sh" ]; then
-  SELFTESTS+=("bash '$SOURCE_ROOT/scripts/mana-selftest.sh' --quick --force-contracts")
+  # Issue #117：嵌套上下文（祖先已在跑 selftest/all.check）不传 --force-contracts——此时 selftest
+  # 必然 SKIP contracts（环切断），传 force 只会让它判 FAIL。顶层真实预检（无 ACTIVE、无
+  # SKIP_SMOKE）照旧带 force，契约真跑。缺此判定即复发无限递归。
+  SELFTEST_FORCE="--force-contracts"
+  if [ -n "${MANA_SELFTEST_ACTIVE:-}" ] || [ "${MANA_PREFLIGHT_SKIP_SMOKE:-}" = "1" ]; then
+    SELFTEST_FORCE=""
+  fi
+  SELFTESTS+=("bash '$SOURCE_ROOT/scripts/mana-selftest.sh' --quick $SELFTEST_FORCE")
 else
   SELFTESTS+=("python3 '$SCRIPT_DIR/check-mana-grant-scope.py' --self-test")
   WARN "自检门: 未找到 mana 正本 checks/，跳过全仓 --quick 自检；全局 tier 守卫与已安装扩展自检仍执行"
