@@ -317,6 +317,7 @@ Issue #8 验收原文：
 4. merge 前对 PR 的真实 diff 复跑授权守卫，把命令与输出写进 state：`authorization.autonomous_landing=true` 且守卫 `exit 0` → 执行 squash merge（`gh pr merge --squash --delete-branch` / `fj pr merge -M squash -d`）；守卫非 0（越出 `tier_grants`）→ 不合并，按 §0.6 上报 CTO。`--manual-landing`（`autonomous_landing=false`）时，PR/CI 后上报 CTO。
 5. PR merge 确认后，orchestrator 移除本 run worktree，删除本地/远端 feature branch，`git fetch --prune` 验证无残留；最后评论并关闭 Issue。
 6. **收尾锁审计（必跑，缺证据不得报 run 完成）**：持锁 shell 退出后跑 `python3 ~/.omp/agent/skills/mana/scripts/mana-run-audit.py <run_dir>`，须 `verdict: CLEAN`（`flock: FREE` + `holder: none` + 无 fifo 残留）才算 run 结束；把输出原文写进 state 与 §5 报告。**不得用 `pgrep -af 'mana-run-lock'` 代替**——持锁入口已 exec 成目标命令，按名字匹配是**假阴性**（run #3 实测：孤儿活着、`pgrep` 零命中）。审计判 `DIRTY` 时的处置：按输出点名的 pid 逐个取原文确认是本次 run 的持锁世代（`cmdline` + `wchan` + `stdin`），再 `kill -TERM`，复跑审计至 `CLEAN`，并在 `decision_log` 记录 pid/时间/原文；**锁文件本身始终不得删改**（会分裂 inode 产生双 owner）。run 进行中做诊断用 `--expect held`：判 `CLEAN` 说明锁按设计被持有；但**持有者 stdin 是命名 fifo 时仍判 `DIRTY`**（`detached_stdin_holders` 会点名 pid）——那是死锁签名，不是健康的进行中 run。
+7. **决策同源校验（必跑，缺证据不得报 run 完成）**：收尾锁审计后必跑 `python3 scripts/mana-sync-decisions.py <run_dir> --check`，须 `decision_log == tsv rows`（decisions.tsv 是决策轨迹权威源，state.decision_log 只是投影）；不一致先同步再报 run 完成——两处不同源 = 任何一侧都可被当“全部决策”读，决策轨迹静默不一致（Issue #108 B 项）。
 
 ## §5 报告
 
