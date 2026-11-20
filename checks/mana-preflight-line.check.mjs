@@ -16,6 +16,9 @@
 // --self-test：两条负例（对齐 #55/#65/#68 合成 drill 惯例）——
 //   ① 删容量信号集（CAPACITY_RE 换永不匹配词）→ capacity 场景漏判为 unavailable，主断言②失败；
 //   ② 删 drift 判定（比较行改恒 none）→ drift 场景不再产生漂移 FAIL，主断言④失败。
+// #108：spawnSync 环境显式剥离父环境 MANA_REPO/MANA_RUN_ID（编排者 run pane 里跑本 check 时，
+//   真指针泄漏进预检 → 场景①假默认线对真 run state 误报 drift）；组5 永久回归：本进程 env
+//   真实带指针（指向毒化 state）时 healthy 场景仍须 PASS，不靠 shell 恰好无变量。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
@@ -36,6 +39,8 @@ const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SCRATCH = join(tmpdir(), `mana-preflight-line-check-${process.pid}`);
 const FAKE_DEFAULT_LINE = "anthropic/claude-x"; // 镜像场景用的假默认线（与镜像 state 基线不同）
 const MIRROR_STATE_LINE = "openai/gpt-old"; // 镜像 .mana state.json 里的旧基线（drift 源）
+// #108：父环境 run 指针必须剥离，防泄漏进被测预检（真指针 + 假默认线 → 误报 drift）。
+const BASE_ENV = { MANA_REPO: undefined, MANA_RUN_ID: undefined };
 
 // 真 repo .mana/*/state.json 的首个非空 worker_model；无则给缺省假线（fresh worktree 形态）
 function realBaseLine() {
@@ -119,6 +124,7 @@ function runPreflight(bin, home, { cwd = REPO, scriptPath = join(cwd, "scripts/m
     encoding: "utf8",
     env: {
       ...process.env,
+      ...BASE_ENV, // #108：先剥离父环境 run 指针，extraEnv 的显式指针（场景④/④b）仍生效
       HOME: home,
       MANA_SRC: REPO,
       PATH: buildPath(bin),
@@ -239,7 +245,31 @@ ${out}`);
     assert.ok(!out.includes("默认线漂移"), `场景④b fresh 不得触发漂移 FAIL 文案\n${out}`);
     console.log("✓ 组4b fresh（MANA_RUN_ID 空）→ 不扫描镜像 stale state，writer drift=none（线路门绿）");
   }
-  console.log("✓ preflight 线路门三态+drift 校验通过（4 组断言）");
+
+  // 5) 回归（#108）：本进程 env 真实带 run 指针（毒化 state 基线 ≠ 假默认线）时，healthy
+  //    场景仍须 PASS——spawnSync 环境剥离失效则此处必现 drift FAIL（泄漏 bug 的确定性复现面）。
+  {
+    const line = realBaseLine();
+    const { home, bin } = setupEnv(line);
+    const poison = join(SCRATCH, "poison-repo", ".mana", "reg-leak", "state.json");
+    mkdirSync(dirname(poison), { recursive: true });
+    writeFileSync(poison, JSON.stringify({ worker_model: MIRROR_STATE_LINE }));
+    const saved = { MANA_REPO: process.env.MANA_REPO, MANA_RUN_ID: process.env.MANA_RUN_ID };
+    process.env.MANA_REPO = join(SCRATCH, "poison-repo");
+    process.env.MANA_RUN_ID = "reg-leak";
+    try {
+      const { rc, out } = runPreflight(bin, home, { line });
+      assert.equal(rc, 0, `父指针在位时 healthy 仍应 PASS（BASE_ENV 剥离失效？）\n${out}`);
+      assert.ok(out.includes("线路门: state=healthy drift=none"), `父指针不得影响 drift 判定\n${out}`);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    console.log("✓ 组5 父环境 MANA_REPO/MANA_RUN_ID 泄漏剥离，healthy 不受父指针影响");
+  }
+  console.log("✓ preflight 线路门三态+drift 校验通过（含 #108 父指针泄漏回归）");
 
   if (process.argv.includes("--self-test")) {
     // 负例①：删容量信号集（CAPACITY_RE 换永不匹配词）→ capacity 场景漏判为 unavailable（主断言②失败）

@@ -1,5 +1,8 @@
 // preflight f 段 pig 门三态断言：临时 PATH / 临时 HOME / 临时 PIG_HOME 构造 pig 在位与否，
 // 不依赖本机是否装 pig（真实 pig 目录从 PATH 剔除，门内只看 `command -v pig` 与扩展文件）。
+// #108：spawnSync 环境显式剥离父环境 MANA_REPO/MANA_RUN_ID（编排者 run pane 里跑本 check 时，
+//   真指针泄漏进预检 → 场景①③假默认线对真 run state 误报 drift）；组6 永久回归：本进程 env
+//   真实带指针（指向毒化 state）时场景①/③仍须通过，不靠 shell 恰好无变量。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -9,6 +12,8 @@ import { reportArgs } from "../extensions/pig/herdr-agent-state.ts";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SCRATCH = join(REPO, ".tmp-pig-gate-check");
+// #108：父环境 run 指针必须剥离，防泄漏进被测预检（真指针 + 假默认线 → 误报 drift）。
+const BASE_ENV = { MANA_REPO: undefined, MANA_RUN_ID: undefined };
 
 function setupEnv() {
   rmSync(SCRATCH, { recursive: true, force: true });
@@ -70,6 +75,7 @@ function runPreflight(bin, home, { withPig = false, env: extraEnv = {} } = {}) {
     encoding: "utf8",
     env: {
       ...process.env,
+      ...BASE_ENV, // #108：先剥离父环境 run 指针，extraEnv 的显式指针仍生效
       HOME: home,
       PATH: buildPath(bin, { withPig }),
       MANA_AUTONOMOUS: "1",
@@ -146,6 +152,38 @@ try {
     "--seq 必须严格单调（herdr 丢弃不高于已收序号的报告）",
   );
   console.log("✓ 组5 reportArgs 语义（--source/--agent-session-path/--seq 单调）");
+}
+
+// 6) 回归（#108）：本进程 env 真实带 run 指针（毒化 state 基线 ≠ 假默认线）时，场景①（无 pig
+//    SKIP PASS）与场景③（pig 在位自检绿 PASS）仍须通过——spawnSync 环境剥离失效则此处必现
+//    drift FAIL（泄漏 bug 的确定性复现面）。恢复原指针后返回。
+{
+  const poison = join(SCRATCH, "poison-repo", ".mana", "reg-leak", "state.json");
+  mkdirSync(dirname(poison), { recursive: true });
+  writeFileSync(poison, JSON.stringify({ worker_model: "openai/gpt-poison" }));
+  const saved = { MANA_REPO: process.env.MANA_REPO, MANA_RUN_ID: process.env.MANA_RUN_ID };
+  process.env.MANA_REPO = join(SCRATCH, "poison-repo");
+  process.env.MANA_RUN_ID = "reg-leak";
+  try {
+    const s1 = setupEnv();
+    const r1 = runPreflight(s1.bin, s1.home);
+    assert.equal(r1.rc, 0, `父指针在位时场景① 仍应 PASS（BASE_ENV 剥离失效？）\n${r1.out}`);
+    assert.ok(r1.out.includes("PREFLIGHT PASS"), `场景① 不得受父指针影响\n${r1.out}`);
+    const s3 = setupEnv();
+    cpSync(
+      join(REPO, "extensions/pig/herdr-agent-state.ts"),
+      join(s3.home, ".pig/agent/extensions/herdr-agent-state.ts"),
+    );
+    const r3 = runPreflight(s3.bin, s3.home, { withPig: true });
+    assert.equal(r3.rc, 0, `父指针在位时场景③ 仍应 PASS\n${r3.out}`);
+    assert.ok(r3.out.includes("PREFLIGHT PASS"), `场景③ 不得受父指针影响\n${r3.out}`);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+  console.log("✓ 组6 父环境 MANA_REPO/MANA_RUN_ID 泄漏剥离，pig 门场景①/③不受父指针影响");
 }
 
 } finally {
