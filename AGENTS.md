@@ -45,5 +45,8 @@
 | decisions.tsv 与 state.decision_log 不同源（两处都可当"全部决策"来读，假绿；tsv 为权威源） | `scripts/mana-sync-decisions.py`（--check 只比对 + 原子重建）+ `checks/mana-decisions-sync.check.mjs`（无参契约断言 + `.mana` 实盘审计 + `--self-test` drill 与负例）+ SKILL §4 收尾必跑 | #108 |
 | 依赖 `.mana/` 实盘数据的契约在 worktree 里假绿（`.mana/` 被 ignore 不存在 → 审计静默跳过却宣称通过，合入主干才红） | `checks/mana-decisions-sync.check.mjs`（无 `.mana/` 时打 `SKIP` 并在末行报审计 run 数）；此类契约必须在正本仓验证，不得只在 lane worktree 跑 | #108（同 run 复发一次：PR #110 → #111） |
 | drill 暂存目录必须落 `tmpdir()` 且按进程隔离；落在仓库内固定路径 = 并发假红 + 残留污染工作树 | `checks/preflight-pig-gate.check.mjs`（`mkdtempSync(tmpdir())` 父目录 + 每次 `setupEnv()` 新建 `env-` 子目录）；并发 drill：`for i in 1 2 3 4; do (node checks/preflight-pig-gate.check.mjs >/tmp/par$i.log 2>&1; echo "run$i=$?") & done; wait` 须 4 组全 `runN=0` | #108 |
+| 仓根未跟踪文件被当成「无害残留」：一旦 `git add` 即进装机镜像（跟踪集覆盖全部仓根文件），既让 `mana-install.check.mjs` 失败，又把工具残留装进全局技能目录 | `checks/mana-install.check.mjs`（`主镜像源覆盖正本跟踪集` 断言：仓根新增被跟踪文件即失败）+ 本节处置口径 | #117 |
+| herdr 官方 pi 集成 `~/.pi/agent/extensions/herdr-agent-state.ts`（`herdr integration install pi` 投放、带 `HERDR_INTEGRATION_ID=pi` 托管头）与仓内 `extensions/pig/herdr-agent-state.ts` 同名不同物，合并任一方向即静默破坏对应线路状态上报 | `checks/mana-install.check.mjs` 的 `assertHerdrIntegrationOwnership`（映射表不得含官方路径、pig 版不得伪装托管头、pig 版走 `report-agent`）+ `--self-test` 负例(c)(d) | #117 |
+| `~/.pi/skills/` 不是 pi/omp 的 skill 根（pi 1.5.2 只读 `~/.pi/agent/skills` 与 `~/.agents/skills`；pig 读 `~/.agents/skills`），旧装机规则残留的副本永不被加载却停在旧版，会让「在用指令集是否最新」判断失真 | `checks/mana-install.check.mjs`（装机脚本不得出现 `.pi/skills/`）+ 实测判据：`~/.agents/skills/mana/SKILL.md` 与正本 `sha256` 相等 | #117 |
 
 新增检查请登记到本表（文件名 + 断言范围），防 drill 失传。
