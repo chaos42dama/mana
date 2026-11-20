@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // /mana prototype 只读原型入口契约自检（Issue #65）
-// 无参数：断言 skills/mana/SKILL.md context 第 7 条 prototype 契约原文（按内容匹配，不按行号）——
+// 无参数：断言 skills/mana/SKILL.md context 第 8 条 prototype 契约原文（按内容匹配，不按行号）——
 //         条目在位（只读原型入口 + 五步）、五步各自的关键句（定决策 / 取材 / throwaway 构建 /
 //         多变体+一个 switcher / 观测量即测试 / 交付）、与 architect 的分工（结构 vs 行为·交互·时序）、
 //         throwaway 硬边界（禁 push/PR/merge/进主干 + scratch 可留但 lane 双 not_found 回收 +
@@ -101,12 +101,12 @@ const GROUPS = [
   },
 ];
 
-// 取 context 第 7 条 prototype 条目文本（到下一个同层编号条目为止），供负向断言圈定范围
+// 取 context 第 8 条 prototype 条目文本（到下一个同层编号条目为止），供负向断言圈定范围
 function prototypeSection(skill, label) {
-  const start = skill.indexOf("7. **prototype**");
-  assert.ok(start >= 0, `${label} 未找到 context 第 7 条 prototype 条目`);
+  const start = skill.indexOf("8. **prototype**");
+  assert.ok(start >= 0, `${label} 未找到 context 第 8 条 prototype 条目`);
   const rest = skill.slice(start);
-  const end = rest.search(/\n8\. /);
+  const end = rest.search(/\n9\. /);
   return end >= 0 ? rest.slice(0, end) : rest;
 }
 
@@ -125,7 +125,7 @@ function assertPrototypeContract(skill, label) {
 function selfTest() {
   // 合成完整版：覆盖全部分组关键原文 + 一对原型命令模板的最小片段
   const full = [
-    "7. **prototype**：`/mana prototype <决策问题>` 是只读原型入口——开独立只读 Pi lane（dispatch 同 §2：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <probe-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`，**不传 `--model`**；brief 用 `skills/mana/references/prototype-switcher-prompt.md`）用最轻的栈做 throwaway 多变体原型，用观测量回答一个具体决策问题，原型永不进主干。五步：",
+    "8. **prototype**：`/mana prototype <决策问题>` 是只读原型入口——开独立只读 Pi lane（dispatch 同 §2：`herdr pane split --current --direction down --cwd <worktree-path> --env MANA_WORKER=1 --no-focus`，随后 `herdr agent start <probe-name> --kind pi --pane <pane-id> -- --exclude-tools ask_question`，**不传 `--model`**；brief 用 `skills/mana/references/prototype-switcher-prompt.md`）用最轻的栈做 throwaway 多变体原型，用观测量回答一个具体决策问题，原型永不进主干。五步：",
     "   - **定决策**：先写清这个原型为哪个决定服务；**没有决策就没有原型**——要结构转 `/mana architect`，要实现转 `/mana run`。",
     "   - **取材**：找先例、列 moodboard 供人挑方向；方向已定则跳过并写明。",
     "   - **throwaway 构建**：隔离 scratch 目录（默认 `.mana/<probe-id>/`，自指定 scratch 路径必须记进产物），不引生产框架、不写测试、不做抽象；显式声明这是 throwaway。",
@@ -134,7 +134,7 @@ function selfTest() {
     "   - **交付**：呈现变体、证据、取舍与**建议**，明说原型是 throwaway；产物写 `.mana/<probe-id>/probe.md` + `variants/<n>/`；建议方向交回 `/mana architect`。",
     "   与 architect 的分工：architect 决定**结构**、不写代码；prototype 决定**行为/交互/时序**、原型永不进主干、不得被当作实现复用；两者都不 landing。",
     "   硬边界：原型代码永不进主干（不 push、不建 PR、不 merge、不落业务目录）；scratch 目录可留，但按 §0.8 回收并双 `not_found` 验证；不写 `.mana/<run-id>/state.json`；不改 Issue。",
-    "8. context 是只读入口。",
+    "9. context 是只读入口。",
   ].join("\n");
   assertPrototypeContract(full, "合成完整版");
   for (const g of GROUPS) console.log(`  ✓ ${g.name}`);
