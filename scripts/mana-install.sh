@@ -159,5 +159,12 @@ dry-run)
   ;;
 install)
   echo "mana-install: 安装完成（幂等；内容未变的文件未重写）"
+  # pi-lens 把 Makefile 判成 shell 文件并派 shellcheck, 报一堆误报 blocking,
+  # 会让 Pi worker 陷入"修不存在的错误"循环 (mana #124)。补丁幂等; 失败不阻断装机
+  # (改的是 node_modules, 属权宜; 升级 pi-lens 后重跑本脚本即恢复)。
+  if [ -f "$REPO_ROOT/scripts/patch-pilens-makefile.py" ]; then
+    echo "---- pi-lens Makefile 误报补丁"
+    python3 "$REPO_ROOT/scripts/patch-pilens-makefile.py" || echo "mana-install: WARN pi-lens 补丁未应用（不影响本仓功能）" >&2
+  fi
   ;;
 esac
