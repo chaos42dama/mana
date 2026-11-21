@@ -501,7 +501,7 @@ function selfTest() {
     r = run(["--check"], env);
     assert.equal(r.code, 0, "references 安装后 --check 为 0");
     console.log("  ✓ references 安装后 → --check 为 0");
-    const refTarget = join(refsDir, "architect-rationale-template.md");
+    const refTarget = join(refsDir, "code-reviewer-prompt.md");
     assert.ok(existsSync(refTarget), "references 已安装");
     const refBefore = statSync(refTarget).mtimeMs;
     run([], env);
