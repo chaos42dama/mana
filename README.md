@@ -34,10 +34,12 @@ checks/all.check.mjs          # 契约 check 聚合 runner：一条命令跑全�
 checks/safe-guard.check.mjs   # OMP safe-guard 自检（5 组断言）
 checks/mana-verdict-ledger.check.mjs  # 验证账本契约自检：head_sha/verdict/decisions.tsv/失效规则（--self-test 跑合成 drill）
 checks/mana-orchestrator-contract.check.mjs  # 编排者侧契约自检：herdr CLI 形态/超时≠未投递/不锁线/交付洁净/回收双验证（--self-test 跑合成残缺负例）
+checks/mana-gate-attribution.check.mjs  # 告警归门禁契约自检：§0.10 三步判读 + §2 brief 真门禁清单（5 条负例真失败）
 scripts/check-mana-grant-scope.py  # 装机至 ~/.omp/agent/skills/mana/scripts/；tier 授权守卫（--self-test 自带）
 scripts/check-mana-issue.py        # 装机至 `~/.omp/agent/skills/mana/scripts/`；intake Issue 骨架校验
 scripts/mana-run-lock.py           # 装机至 `~/.omp/agent/skills/mana/scripts/`；run 单 owner 协作锁入口
 scripts/mana-run-audit.py          # 装机至 `~/.omp/agent/skills/mana/scripts/`；收尾锁审计（只读，按锁 inode 找持锁进程）
+scripts/patch-pilens-makefile.py    # 装机至 `~/.omp/agent/skills/mana/scripts/`；补 pi-lens 对 Makefile 误报 shellcheck（幂等，装机调用，mana #124）
 scripts/mana-preflight.sh          # 装机至 `~/.omp/agent/skills/mana/scripts/`；run 预检七门（任一 FAIL 非 0 即停）
 scripts/mana-selftest.sh           # 装机至 `~/.omp/agent/skills/mana/scripts/`；全仓自检入口（--list/--quick/--only）
 scripts/test_mana_selftest.py      # 装机至 `~/.omp/agent/skills/mana/scripts/`；自检入口回归测试

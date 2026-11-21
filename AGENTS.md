@@ -30,6 +30,7 @@
 | 工人线路被 `--model` 锁死回流 | §2「不带 `--model`」禁令 + dispatch 文本断言；`checks/mana-orchestrator-contract.check.mjs`（断言所有 `agent start` 命令模板不含 `--model` + §5 自检断言句在位） | #20 |
 | verdict 绑定 `head_sha`，新 commit 作废旧结论 | `checks/mana-verdict-ledger.check.mjs`（结论 + head 绑定断言） | #24（复发 #29） |
 | 工人交付后工作树残留格式化脏改动（pi-lens deferred format） | `checks/mana-worker-hygiene.check.mjs`（§2 洁净契约 + §3 脏树不绑 `head_sha` 不判 `verified`） | #24（复发 #27/#29，一类三次） |
+| 工人被**不属任何门禁**的宿主工具告警驱动，反复"修"不存在的错误（pi-lens 把 Makefile 归为 shell 并派 shellcheck，报 `2 blocking`；而 `make lint` 只查 `*.sh`，实测一直 clean）→ nrc `nrc-9-live` 空转 70+ 分钟零提交 | `checks/mana-gate-attribution.check.mjs`（§0.10 三步判读 + §2 brief 真门禁清单，5 条负例真失败）+ `scripts/patch-pilens-makefile.py`（治标：runner 按扩展名早退 + `Makefile` 归 `kind="make"`，由装机调用） | #124 |
 | 契约无常驻 drill，drill 随 run 结束失传 | drill 常驻在 `checks/*.check.mjs --self-test`（#31 起） | #28（复发 #29） |
 | herdr/gh CLI 参数形态误用 | §2 参数形态说明 + `checks/mana-orchestrator-contract.check.mjs`（CLI 形态断言：agent prompt/agent wait/pane split/agent start） | #27 |
 | `--wait` 超时被误当未投递 | §2「先 `agent get/read` 取证，不得重复 prompt」+ `checks/mana-orchestrator-contract.check.mjs`（超时 ≠ 未投递断言） | #24（复发 #27/#28/#29） |
