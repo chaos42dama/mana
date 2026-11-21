@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# /mana 全仓自检入口（10 步，顺序固定）：契约 check 聚合 + tier 守卫/run 锁/issue 校验自检与测试 + 五个宿主扩展内联自检。
+# /mana 全仓自检入口（11 步，顺序固定）：契约 check 聚合 + tier 守卫/run 锁/issue 校验/statechart 自检与测试 + 五个宿主扩展内联自检。
 # 不早退：任一步失败仍跑完其余，末尾逐项汇总，末行 `ALL-<n>-rc=<0|1>`
 #（n=实际执行步数，不含 SKIP；命名对齐 checks/all.check.mjs 的末行计数惯例）。
 # 用法：bash scripts/mana-selftest.sh [--list] [--quick] [--only <子串>] [--force-contracts]
 #   --list              只列步骤，不执行
-#   --quick             只跑前 5 步（契约 + python 自检），跳过 bun 扩展步（run 预检 d 门用这个档）
+#   --quick             只跑前 6 步（契约 + python 自检），跳过 bun 扩展步（run 预检 d 门用这个档）
 #   --only <子串>       按步骤名过滤；无匹配即非 0（防过滤笔误假绿）
 #   --force-contracts   顶层显式声明必须真跑 contracts（预检 d 门用）；若环境已带嵌套标记仍让位（见下）
 # 缺工具降级（与 run 预检 pig 门同语义：可选依赖缺失不把机器挡死）：
@@ -29,6 +29,7 @@ STEPS=(
   "run-lock|python3 scripts/test_mana_run_lock.py|python3"
   "issue-check|python3 scripts/check-mana-issue.py --self-test|python3"
   "issue-check-tests|python3 scripts/test_check_mana_issue.py|python3"
+  "statechart|python3 scripts/mana-statechart.py --self-test|python3"
   "ext-worker|PI_MANA_WORKER_SELFTEST=1 bun extensions/pi/mana-worker.ts|bun"
   "ext-safe-guard|PI_SAFE_GUARD_SELFTEST=1 bun extensions/pi/safe-guard.ts|bun"
   "ext-precommit|PI_PRECOMMIT_SELFTEST=1 bun extensions/pi/precommit-review.ts|bun"
@@ -59,7 +60,7 @@ while [ $# -gt 0 ]; do
 done
 
 # 过滤：--quick 砍掉后 5 个 bun 扩展步；--only 按步骤名子串过滤（无匹配 ⇒ 非 0）
-if [ "$QUICK" = "1" ]; then STEPS=("${STEPS[@]:0:5}"); fi
+if [ "$QUICK" = "1" ]; then STEPS=("${STEPS[@]:0:6}"); fi
 if [ -n "$ONLY" ]; then
   FILTERED=()
   for e in "${STEPS[@]}"; do

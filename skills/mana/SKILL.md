@@ -148,6 +148,10 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
    - **doctor**：只读零副作用——对已生成 verify-<app> 跑六节 Doctor 校验 + 索引卫生（features/README.md 与 sibling 文件对账）。
    - **status**：只读清单——verify-* 技能、feature 数、每个 feature 的 `last_verified_sha` / `last_verified_at` / `verdict`，并给出相对 `origin/main`（及超天数）的陈旧度。
    - **maintain**——功能地图例行对账（source wave brief 模板用 `~/.omp/agent/skills/mana/references/veri-maintain-prompt.md`）：三结果 **`clean|changed|blocked`**——`clean`（无 verify-<app> 或无需改）/ `changed`（只装已证实的修正，≤1 个 PR）/ `blocked`（逐项写明挡点）。Pass 0–6：**0 定位目标**（无 verify-<app> 就停、指回 init）→ **1 索引卫生**（features/README.md 与 sibling 文件对账，修缺/多/重复/死条目）→ **2 source wave**（每 feature 一条只读 lane，峰值 ≤ `max_parallel_lanes`，不传 `--model`；孩子只读、不驱动、不改文件）→ **3 reconcile**（每 feature 有摘要即齐；除非有具体源码路径不得判缺失）→ **4 live pass**（orchestrator 独占驾驶：每 feature 至少一次；三不变量——doctor 不变量、证据不被 cleanup 吃掉、残留必须清理；`verified-unreachable` 必须写明具体前置条件与尝试路径）→ **5 triage**（doc drift / harness gap / product gap——product gap 记录上报、不进 PR）→ **6 出 PR 或停**（`changed` 时转 intake、经 `/mana run` 出 ≤1 PR）。`--source-only` 只跑 source wave，结果标 **partial**，不得当作 `clean`。编辑范围只限 verify-<app> 自身目录，**永不改产品代码**（行为不对 = doc drift 修地图或 product gap 上报，不纸盖）。
+   - **formal & statechart**（形式化检验与状态机可视化）：
+     - `init --formal <目标>`：针对并发锁、状态机跃迁、重试协议等高危逻辑提炼 Invariant，生成有限状态机规范写入项目本地 `.mana/veri/<target>.spec.json`（不改产品代码），并调用 `python3 ~/.omp/agent/skills/mana/scripts/mana-statechart.py .mana/veri/<target>.spec.json` 实跑验证。
+     - `statechart [spec]`：调用 `mana-statechart.py` 穷举可达状态空间，默认**双模输出**（终端 ASCII-art + Mermaid `stateDiagram-v2`）；检测到不变式违例或死锁时输出**最短反例路径**（Shortest Violation Path）并返回非零码。
+     - `maintain --formal [spec]`：结合 `git diff` 审计状态机规范与业务代码一致性，输出三分类判定：**`in-sync`**（规范与实现一致）/ **`code-bug`**（代码破坏不变式，记录上报、永不直接改产品代码）/ **`spec-drift`**（业务契约有意变更，仅更新 `.mana/veri/<target>.spec.json`）。
    - 通用约束：lane 数 ≤ `max_parallel_lanes`；dispatch **不传 `--model`**；explore lane 只读（受 safe-guard `~/.pi/**` 用户级硬拦约束）；`/mana veri` 的 PR 上限 1。
 10. context 是只读入口。需要改动时转 intake；已有已授权 Issue 时转 run。不得在 context 静默派发 worker、修改 Issue 或扩大授权（architect 第 7 条、prototype 第 8 条、veri 第 9 条与 how/why 的只读取证 lane——第 1/2 条 Complex/并行取证路径——是仅有的五个显式例外）。
 

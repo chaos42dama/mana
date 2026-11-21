@@ -130,7 +130,7 @@ if (SELF_TEST) {
     const out = `${r.stdout}${r.stderr}`;
     assert.equal(r.status, 0, `嵌套无 force 必须仍 rc=0\n${out}`);
     assert.ok(out.includes("SKIP contracts"), `必须仍 SKIP contracts\n${out}`);
-    assert.ok(out.includes("ALL-4-rc=0"), `必须 ALL-4-rc=0\n${out}`);
+    assert.ok(out.includes("ALL-5-rc=0"), `必须 ALL-5-rc=0\n${out}`);
     console.log("✓ 组6 nested 无 force → SKIP contracts + rc=0（对照未破）");
   }
 
