@@ -19,6 +19,7 @@ STEP_NAMES = [
     "run-lock",
     "issue-check",
     "issue-check-tests",
+    "statechart",
     "ext-worker",
     "ext-safe-guard",
     "ext-precommit",
@@ -47,17 +48,17 @@ def run(args, env_extra=None):
 
 
 class ManaSelftestTest(unittest.TestCase):
-    def test_list_contains_all_ten_steps(self):
+    def test_list_contains_all_eleven_steps(self):
         r = run(["bash", str(SCRIPT), "--list"])
         self.assertEqual(r.returncode, 0, r.stderr)
         for name in STEP_NAMES:
             self.assertIn(name, r.stdout)
 
-    def test_quick_runs_five_steps_without_bun(self):
+    def test_quick_runs_six_steps_without_bun(self):
         r = run(["bash", str(SCRIPT), "--quick"])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("ALL-5-rc=0", r.stdout)
-        for name in STEP_NAMES[5:]:
+        self.assertIn("ALL-6-rc=0", r.stdout)
+        for name in STEP_NAMES[6:]:
             self.assertNotIn(name, r.stdout)
         self.assertNotIn("bun ", r.stdout, "--quick 不得出现 bun 执行")
 
@@ -70,7 +71,7 @@ class ManaSelftestTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("SKIP contracts", r.stdout, "嵌套重入必须 SKIP contracts（切环）")
         self.assertNotIn("✓ contracts", r.stdout)
-        self.assertIn("ALL-4-rc=0", r.stdout)  # 5 步 − contracts，只真跑 4 步
+        self.assertIn("ALL-5-rc=0", r.stdout)  # 6 步 − contracts，只真跑 5 步
 
     def test_force_contracts_runs_contracts_at_top_level(self):
         r = run(["bash", str(SCRIPT), "--quick", "--force-contracts"])
@@ -78,7 +79,7 @@ class ManaSelftestTest(unittest.TestCase):
         self.assertIn(
             "✓ contracts", r.stdout, "顶层 --force-contracts 必须真跑 contracts"
         )
-        self.assertIn("ALL-5-rc=0", r.stdout)
+        self.assertIn("ALL-6-rc=0", r.stdout)
 
     def test_force_contracts_at_nested_fails(self):
         # Issue #117（D2）：--force-contracts 是顶层显式意图。嵌套态无法真跑（会成环），
@@ -89,7 +90,7 @@ class ManaSelftestTest(unittest.TestCase):
         )
         self.assertNotEqual(r.returncode, 0, "嵌套 + force 必须非 0")
         self.assertIn("✗ contracts", r.stdout)
-        self.assertIn("ALL-5-rc=1", r.stdout)
+        self.assertIn("ALL-6-rc=1", r.stdout)
 
     def test_negative_extra_cmd_makes_selftest_fail(self):
         r = run(["bash", str(SCRIPT), "--quick"], {"MANA_SELFTEST_EXTRA_CMD": "false"})
