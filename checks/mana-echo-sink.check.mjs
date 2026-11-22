@@ -37,6 +37,13 @@ const REQUIRED_SINK_SNIPPETS = [
   "sync_session",
   "--sync-session",
   "echo-sessions",
+  // Issue #128：live 门控 + 字节偏移增量解析 + 单 tick 解析预算
+  "MANA_ECHO_TICK_BUDGET_BYTES",
+  "MANA_ECHO_MAX_FILE_BYTES",
+  "parse_state_path",
+  "load_parse_state",
+  "save_parse_state",
+  "max_bytes",
 ];
 
 function assertEchoContract({
@@ -126,6 +133,22 @@ function selfTest() {
     /mana-heartbeat\.sh/,
     "负例 2：移除 mana-heartbeat.sh 的 --sync-mana 挂接必须失败",
   );
+
+  // 1b) Issue #128 负例：移除 live 门控 / 增量解析 / 单 tick 预算必须失败
+  for (const [name, snippet, expect] of [
+    ["负例 3：移除 live 门控", "MANA_ECHO_TICK_BUDGET_BYTES", /MANA_ECHO_TICK_BUDGET_BYTES/],
+    ["负例 4：移除增量解析水位", "save_parse_state", /save_parse_state/],
+    ["负例 5：移除单文件上限", "MANA_ECHO_MAX_FILE_BYTES", /MANA_ECHO_MAX_FILE_BYTES/],
+  ]) {
+    assert.throws(
+      () =>
+        assertEchoContract({
+          sinkText: rawSink.replaceAll(snippet, ""),
+        }),
+      expect,
+      `${name} 必须失败`,
+    );
+  }
 
   // 2) Live 合成 drill：验证 CLI 默认 dry-run + MANA_ECHO_LIVE=1 断网非阻断降级
   const scratch = mkdtempSync(join(tmpdir(), "mana-echo-sink-drill-"));
@@ -261,6 +284,71 @@ function selfTest() {
     const outSB1 = JSON.parse(rsB1.stdout);
     assert.equal(outSB1.ops[0]?.op, "createDiscussion", "/new 或重启切换新 session_id 后须创建新 Discussion");
     assert.equal(outSB1.ops[0]?.session_id, "01b27700-bbbb");
+
+    // (d) Issue #128：增量解析——追加回合后再次同步只处理新增字节，仍正确追加楼层
+    const sessC = join(scratch, "2026-10-23T04-00-00-001Z_01c00001-cccc.jsonl");
+    const sessCBody = [
+      JSON.stringify({ type: "session", id: "01c00001-cccc", cwd: scratch }),
+      JSON.stringify({
+        type: "message",
+        id: "v1",
+        message: { role: "user", content: [{ type: "text", text: "/mana recall #128" }] },
+      }),
+    ].join("\n") + "\n";
+    writeFileSync(sessC, sessCBody);
+    const rsC1 = spawnSync(
+      "python3",
+      [join(REPO, "scripts/echo-discussion-sink.py"), "--sync-session", sessC, "--repo", scratch],
+      { env: envDry, encoding: "utf8" },
+    );
+    assert.equal(rsC1.status, 0, rsC1.stderr);
+    assert.equal(
+      JSON.parse(rsC1.stdout).ops[0]?.op,
+      "createDiscussion",
+      "首次同步须建 Discussion",
+    );
+    assert.ok(
+      existsSync(join(scratch, ".mana", "echo-parse", "01c00001-cccc.json")),
+      "须落盘解析水位 .mana/echo-parse/<session_id>.json（增量解析水位）",
+    );
+    writeFileSync(
+      sessC,
+      sessCBody +
+        JSON.stringify({
+          type: "message",
+          id: "v2",
+          message: { role: "user", content: [{ type: "text", text: "/mana run #128" }] },
+        }) +
+        "\n",
+    );
+    const rsC2 = spawnSync(
+      "python3",
+      [join(REPO, "scripts/echo-discussion-sink.py"), "--sync-session", sessC, "--repo", scratch],
+      { env: envDry, encoding: "utf8" },
+    );
+    assert.equal(rsC2.status, 0, rsC2.stderr);
+    const outSC2 = JSON.parse(rsC2.stdout);
+    assert.ok(
+      outSC2.ops.some((o) => o.op === "addDiscussionComment"),
+      "增量解析后追加回合仍须追加楼层",
+    );
+    assert.ok(
+      !outSC2.ops.some((o) => o.op === "createDiscussion"),
+      "增量解析不得重复建 Discussion",
+    );
+
+    // (e) Issue #128：live 门控——未设 MANA_ECHO_LIVE 时 --watch-repo 必须立即返回（不空转守护）
+    const t0 = Date.now();
+    const rw = spawnSync(
+      "python3",
+      [join(REPO, "scripts/echo-discussion-sink.py"), "--watch-repo", scratch],
+      { env: envDry, encoding: "utf8", timeout: 30_000 },
+    );
+    assert.equal(rw.status, 0, rw.stderr);
+    assert.ok(
+      Date.now() - t0 < 5000,
+      `live 门控：未设 MANA_ECHO_LIVE 时 --watch-repo 必须立即返回（实测 ${Date.now() - t0}ms）`,
+    );
 
     console.log(
       "✓ 合成 drill 通过：Session 级反射（同 session 复用 / 换 session 新建）+ 默认 dry-run 幂等 + MANA_ECHO_LIVE=1 异常非阻断降级 + 两条负例真失败",

@@ -270,7 +270,9 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 
 - `MANA_AUTONOMOUS=1` — 编排者自主模式（safe-guard 跳过危险确认，改为 notify）
 - `MANA_WORKER=1` — 工人模式（提问 block、危险 bash 只告警、review 整门关闭）
-- `MANA_ECHO_LIVE=1` — 开启 `echo-discussion-sink.py` 线上写入 `41490/ipi` `echo` 讨论分类（默认未设时仅 dry-run 更新本地 `echo-state.json`）
+- `MANA_ECHO_LIVE=1` — 开启 `echo-discussion-sink.py` 线上写入 `41490/ipi` `echo` 讨论分类（默认未设时仅 dry-run 更新本地 `echo-state.json`；**未设时 `--watch-repo` 守护不启动**，避免空烧 CPU）
+- `MANA_ECHO_TICK_BUDGET_BYTES` — `--watch-repo` 每轮（3s tick）最多解析的字节数（默认 `8MiB`；超出的留到下一轮）
+- `MANA_ECHO_MAX_FILE_BYTES` — `--watch-repo` 单个 session JSONL 的体积上限（默认 `256MiB`；超限文件直接跳过，不解析）
 - `MANA_LANE_ALLOW_PATHS` — 工人 lane 允许写入的路径 glob/前缀白名单（`mana-worker.ts` 事前拦截越界 `write/edit`）
 
 ### 关键扩展（`extensions/pi/`）

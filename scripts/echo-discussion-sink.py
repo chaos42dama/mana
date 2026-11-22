@@ -34,6 +34,12 @@ DEFAULT_REPO = "ipi"
 DEFAULT_REPO_ID = "R_kgDOThYpRg"
 DEFAULT_ECHO_CATEGORY_ID = "DIC_kwDOThYpRs4DBz3d"  # slug: echo ("Show off something you've made")
 
+# 解析水位里保留的最近回合数（Issue #128）：更早回合的楼层已建、状态键不再变化，
+# 丢弃它们只影响"更新旧楼层"资格，幂等由 sink 的 turn_comments 承担。
+PERSISTED_TURNS_WINDOW = 200
+# 水位文件里回合文本的字符预算上限（防止单个超长会话把水位文件撑爆）。
+PERSISTED_TURNS_MAX_CHARS = 256 * 1024
+
 SGT = dt.timezone(dt.timedelta(hours=8), name="SGT")
 
 MANA_CMD_RE = re.compile(r"(?:^|\s)/mana(?:\s|$)|【41490/ipi#\d+", re.IGNORECASE)
@@ -298,31 +304,148 @@ def extract_session_id_from_stem(path: Path) -> str:
     return stem
 
 
-def parse_session_jsonl(session_path: Path) -> dict[str, Any]:
-    """解析 omp/pi 会话 JSONL，提取 session_id、cwd、model、以及所有用户指令回合（含是否命中 /mana）。"""
-    info: dict[str, Any] = {
-        "session_id": extract_session_id_from_stem(session_path),
-        "session_path": str(session_path),
+def _new_session_state(session_id: str, session_path: str = "") -> dict[str, Any]:
+    """新建会话解析水位状态（增量解析用；Issue #128）。"""
+    return {
+        "offset": 0,
+        "line_index": 0,
+        "session_id": session_id,
+        "session_path": session_path,
         "cwd": None,
         "title": None,
         "model": None,
         "started_at": None,
-        "turns": [],
         "has_mana_command": False,
-        "referenced_run_ids": [],
+        "turns": [],
+        "_run_ids": set(),
     }
-    if not session_path.exists():
-        return info
 
-    current_turn: dict[str, Any] | None = None
-    run_id_set: set[str] = set()
+
+def _session_info(state: dict[str, Any]) -> dict[str, Any]:
+    """把解析水位状态投影成对外 info 形状（与旧的全量解析一致）。"""
+    return {
+        "session_id": state["session_id"],
+        "session_path": state["session_path"],
+        "cwd": state["cwd"],
+        "title": state["title"],
+        "model": state["model"],
+        "started_at": state["started_at"],
+        "turns": state["turns"],
+        "has_mana_command": state["has_mana_command"],
+        "referenced_run_ids": sorted(state["_run_ids"]),
+    }
+
+
+def parse_session_jsonl(
+    session_path: Path,
+    state: dict[str, Any] | None = None,
+    max_bytes: int | None = None,
+) -> dict[str, Any]:
+    """解析 omp/pi 会话 JSONL，提取 session_id、cwd、model、以及所有用户指令回合（含是否命中 /mana）。
+
+    增量语义（Issue #128）：
+    - state=None → 一次性全量解析（CLI 单次调用、离线自检）。
+    - state=dict → 只消费 state["offset"] 之后的新增字节并就地更新水位
+      （offset / line_index / turns / 元信息），供下一轮续读；max_bytes 限制本次新增
+      消费字节数（单 tick 解析预算），超限提前收尾、下一轮从断点继续。
+    """
+    if state is None:
+        state = _new_session_state(
+            extract_session_id_from_stem(session_path), str(session_path)
+        )
+    info = state  # 就地更新：turns 列表与水位共享同一份状态
+    if not session_path.exists():
+        return _session_info(state)
 
     try:
-        lines = session_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except Exception:
-        return info
+        size = session_path.stat().st_size
+    except OSError:
+        return _session_info(state)
+    if size < state["offset"]:
+        # 文件被截断或轮转：丢弃水位，从头重解析
+        fresh = _new_session_state(
+            extract_session_id_from_stem(session_path), str(session_path)
+        )
+        state.clear()
+        state.update(fresh)
 
-    for idx, raw in enumerate(lines):
+    want = size - state["offset"]
+    if max_bytes is not None:
+        want = min(want, max(0, int(max_bytes)))
+    if want <= 0:
+        return _session_info(state)
+
+    try:
+        with session_path.open("rb") as fh:
+            fh.seek(state["offset"])
+            buf = b""
+            eof = False
+            # 读到「累计 want 字节以上且含换行」或 EOF 为止：必须能看到预算边界之后的换行，
+            # 否则预算小于单行长度时会永远读不满同一行（零进展死循环）。
+            while True:
+                block = fh.read(262144)
+                if not block:
+                    eof = True
+                    break
+                buf += block
+                if len(buf) >= want and b"\n" in buf:
+                    break
+    except OSError:
+        return _session_info(state)
+    if not buf:
+        return _session_info(state)
+
+    # 行边界：预算内的完整行照常消费；预算内没有完整行时，吃掉第一条跨预算的行（保证推进）。
+    nl_positions: list[int] = []
+    scan = 0
+    while True:
+        idx = buf.find(b"\n", scan)
+        if idx < 0:
+            break
+        nl_positions.append(idx)
+        scan = idx + 1
+
+    within = [p + 1 for p in nl_positions if p + 1 <= want]
+    if within:
+        consumed = within[-1]
+        lines = buf[:consumed].decode("utf-8", errors="replace").split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+    elif nl_positions:
+        # 单行超过预算：吃掉第一条跨预算的行，保证本轮有进展（下一轮从其后继续）
+        consumed = nl_positions[0] + 1
+        lines = buf[:consumed].decode("utf-8", errors="replace").split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+    else:
+        # 窗口内没有任何换行：只有 EOF 时的最后一行（无换行）才可能是完整记录
+        if not eof:
+            return _session_info(state)
+        candidate = buf.decode("utf-8", errors="replace").strip()
+        try:
+            json.loads(candidate)
+        except Exception:
+            return _session_info(state)
+        consumed = len(buf)
+        lines = [candidate]
+
+    if eof:
+        tail = buf[consumed:].decode("utf-8", errors="replace").strip()
+        if tail:
+            # 末尾无换行的残留：仅当它本身是合法 JSON（完整记录）时才消费
+            try:
+                json.loads(tail)
+            except Exception:
+                tail = ""
+            if tail:
+                lines.append(tail)
+                consumed = len(buf)
+
+    state["offset"] += consumed
+    current_turn: dict[str, Any] | None = info["turns"][-1] if info["turns"] else None
+    run_id_set: set[str] = state["_run_ids"]
+
+    for idx, raw in enumerate(lines, start=state["line_index"]):
         raw = raw.strip()
         if not raw:
             continue
@@ -417,8 +540,11 @@ def parse_session_jsonl(session_path: Path) -> dict[str, Any]:
                     f"⚠️ {msg.get('toolName', '?')} error: {short_text(err_txt, 140)}"
                 )
 
-    info["referenced_run_ids"] = sorted(run_id_set)
-    return info
+    state["line_index"] += len(lines)
+    state["_run_ids"] = run_id_set
+    if len(state["turns"]) > PERSISTED_TURNS_WINDOW:
+        del state["turns"][:-PERSISTED_TURNS_WINDOW]
+    return _session_info(state)
 
 
 def format_root_body(
@@ -870,18 +996,114 @@ def sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) -> list
     return ops
 
 
-def resolve_session_state_file(session_path: Path, repo_dir: Path | None = None) -> tuple[Path, Path]:
-    """根据会话 JSONL 确定所属 repo 目录与状态文件 `<repo>/.mana/echo-sessions/<session_id>.json`。"""
-    sess_info = parse_session_jsonl(session_path)
-    session_id = sess_info["session_id"]
-    if repo_dir is None:
-        cwd = sess_info.get("cwd")
-        if cwd and Path(cwd).is_dir():
-            repo_dir = Path(cwd)
-        else:
-            repo_dir = session_path.parent
-    state_file = repo_dir / ".mana" / "echo-sessions" / f"{session_id}.json"
-    return repo_dir, state_file
+def parse_state_path(repo_dir: Path, session_key: str) -> Path:
+    """会话解析水位文件路径：`<repo>/.mana/echo-parse/<session_key>.json`。
+
+    与 Discussion 状态（`.mana/echo-sessions/<id>.json`）分目录存放，避免互相污染；
+    同一会话文件始终命中同一份水位（key 取 session 记录里的 id，回退到文件名推导的 id）。
+    """
+    return repo_dir / ".mana" / "echo-parse" / f"{session_key}.json"
+
+
+def load_parse_state(repo_dir: Path, session_id: str) -> dict[str, Any]:
+    """读取上次解析水位；不存在或损坏则退化为空水位（等价全量解析）。"""
+    state = _new_session_state(session_id)
+    path = parse_state_path(repo_dir, session_id)
+    if not path.is_file():
+        return state
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return state
+    if not isinstance(data, dict):
+        return state
+    for key in ("offset", "line_index"):
+        try:
+            state[key] = int(data.get(key) or 0)
+        except Exception:
+            state[key] = 0
+    for key in ("session_id", "cwd", "title", "model", "started_at"):
+        if data.get(key) is not None:
+            state[key] = data[key]
+    state["has_mana_command"] = bool(data.get("has_mana_command"))
+    state["turns"] = data.get("turns") or []
+    state["_run_ids"] = set(data.get("_run_ids") or [])
+    return state
+
+
+def save_parse_state(repo_dir: Path, session_key: str, state: dict[str, Any]) -> None:
+    """落盘解析水位（失败不抛：水位丢失只退化为全量解析，不阻断主流程）。
+
+    只保留"仍可能被更新"的最近回合：更早回合的楼层已建、状态键不再变化，
+    丢弃它们只影响"更新旧楼层"的资格，不影响幂等（幂等由 sink 的 turn_comments 承担）。
+    """
+    path = parse_state_path(repo_dir, session_key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        turns = list(state.get("turns") or [])
+        turns = turns[-PERSISTED_TURNS_WINDOW:]
+        # 按字符预算再裁一次，避免单个长会话的水位文件无限膨胀
+        budget = PERSISTED_TURNS_MAX_CHARS
+        while turns:
+            size = sum(len(json.dumps(t, ensure_ascii=False)) for t in turns)
+            if size <= budget:
+                break
+            turns.pop(0)
+        data = {
+            "offset": int(state.get("offset") or 0),
+            "line_index": int(state.get("line_index") or 0),
+            "session_id": state.get("session_id"),
+            "cwd": state.get("cwd"),
+            "title": state.get("title"),
+            "model": state.get("model"),
+            "started_at": state.get("started_at"),
+            "has_mana_command": bool(state.get("has_mana_command")),
+            "turns": turns,
+            "_run_ids": sorted(state.get("_run_ids") or []),
+        }
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
+def read_session_meta(session_path: Path) -> dict[str, Any]:
+    """读取会话头部的 `session` 记录（cwd / id），**只扫前 256KiB**，命中即停。
+
+    会话记录在文件开头（omp/pi 均为首两条之一），故限定扫描窗口，避免尾部大文件被整读。
+    扫不到就返回空 meta（调用方退化为用 stem 推导的 id + 调用方给的 repo_dir）。
+    """
+    meta: dict[str, Any] = {"session_id": None, "cwd": None}
+    scanned = 0
+    try:
+        with session_path.open("rb") as fh:
+            carry = b""
+            while scanned < 256 * 1024:
+                block = fh.read(65536)
+                if not block:
+                    break
+                scanned += len(block)
+                buf = carry + block
+                lines = buf.split(b"\n")
+                carry = lines.pop()
+                for raw in lines:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = json.loads(raw.decode("utf-8", errors="replace"))
+                    except Exception:
+                        continue
+                    if obj.get("type") == "session":
+                        if obj.get("id"):
+                            meta["session_id"] = str(obj["id"])
+                        if obj.get("cwd"):
+                            meta["cwd"] = str(obj["cwd"])
+                        return meta
+    except OSError:
+        return meta
+    return meta
 
 
 def sync_session(
@@ -889,28 +1111,77 @@ def sync_session(
     state_file: Path | None = None,
     repo_dir: Path | None = None,
     dry_run: bool = True,
+    max_bytes: int | None = None,
 ) -> list[dict[str, Any]]:
     """按 Session 粒度同步：
     1 个 session (.jsonl) = 1 个 Discussion 主帖；
     每当在 session 中执行 `/mana ...` 指令（无论 recall/how/why/run），立即建帖或追加 `[session:turn]` 楼层；
     若该 session 关联了 `.mana/<run-id>`，则将该 run 的 Lane 状态跃迁与 `decisions.tsv` 一并同步至同一 Discussion；
-    当用户 `/new` 或 `/q` 重启进程产生新 session `.jsonl` 时，因 `session_id` 不同，自动创建对应的新 Discussion！
-    """
-    sess_info = parse_session_jsonl(session_path)
-    if not sess_info["has_mana_command"]:
-        return []
+    当用户 `/new` 或 `/q` 重启进程产生新 session `.jsonl` 时，因 `session_id` 不同，自动创建对应的新的 Discussion！
 
+    解析走**字节偏移增量**（水位落盘 `<repo>/.mana/echo-sessions/<session_id>.parse.json`）：
+    单次只消费新增字节，max_bytes 为本次解析预算上限（超限留到下一轮）。
+    """
+    ops, _ = _sync_session_impl(session_path, state_file, repo_dir, dry_run, max_bytes)
+    return ops
+
+
+def _sync_session_impl(
+    session_path: Path,
+    state_file: Path | None,
+    repo_dir: Path | None,
+    dry_run: bool,
+    max_bytes: int | None,
+) -> tuple[list[dict[str, Any]], int]:
+    """返回 (ops, 本次新增消费字节数)。"""
     import fcntl
-    resolved_repo, default_state_file = resolve_session_state_file(session_path, repo_dir)
-    target_state_file = state_file or default_state_file
+
+    meta = read_session_meta(session_path)
+    if repo_dir is not None:
+        resolved_repo = repo_dir
+    elif meta.get("cwd") and Path(meta["cwd"]).is_dir():
+        resolved_repo = Path(meta["cwd"])
+    else:
+        resolved_repo = session_path.parent
+
+    session_key = meta.get("session_id") or extract_session_id_from_stem(session_path)
+    pstate = parse_state_path(resolved_repo, session_key)
+    consumed = 0
+    try:
+        pstate.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return [], 0
+    with pstate.with_suffix(".lock").open("a+", encoding="utf-8") as parse_lock:
+        try:
+            fcntl.flock(parse_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return [], 0
+        state = load_parse_state(resolved_repo, session_key)
+        before_offset = int(state.get("offset") or 0)
+        sess_info = parse_session_jsonl(session_path, state=state, max_bytes=max_bytes)
+        consumed = int(state.get("offset") or 0) - before_offset
+        if consumed > 0:
+            save_parse_state(resolved_repo, session_key, state)
+
+    if not sess_info["has_mana_command"]:
+        return [], consumed
+
+    target_state_file = state_file or (
+        resolved_repo / ".mana" / "echo-sessions" / f"{sess_info['session_id']}.json"
+    )
     target_state_file.parent.mkdir(parents=True, exist_ok=True)
     lock_file = target_state_file.with_suffix(".lock")
     with lock_file.open("a+", encoding="utf-8") as lock_fh:
         try:
             fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return []
-        return _sync_session_locked(sess_info, session_path, resolved_repo, target_state_file, dry_run=dry_run)
+            return [], consumed
+        return (
+            _sync_session_locked(
+                sess_info, session_path, resolved_repo, target_state_file, dry_run=dry_run
+            ),
+            consumed,
+        )
 
 
 def _sync_session_locked(
@@ -1172,6 +1443,75 @@ def run_selftest() -> None:
     assert is_live_enabled(True, False, {}), "--live 应开启 live"
     assert not is_live_enabled(True, True, {"MANA_ECHO_LIVE": "1"}), "--dry-run 优先级最高"
 
+    # 1c. Issue #128：增量解析等价性 + 单 tick 预算 + live 门控
+    with tempfile.TemporaryDirectory() as tmp:
+        sess = Path(tmp) / "2026-10-23T04-00-00-000Z_01c00001-0000-0000-0000-000000000001.jsonl"
+        records = [
+            {"type": "session", "id": "01c00001-0000-0000-0000-000000000001", "cwd": tmp},
+            {
+                "type": "message",
+                "id": "m1",
+                "message": {"role": "user", "content": [{"type": "text", "text": "/mana recall #95"}]},
+            },
+            {
+                "type": "message",
+                "id": "m2",
+                "message": {
+                    "role": "assistant",
+                    "usage": {"totalTokens": 42},
+                    "content": [{"type": "toolCall", "name": "bash", "arguments": {"command": "ls"}}],
+                },
+            },
+        ]
+        sess.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+        # 全量解析基准
+        full = parse_session_jsonl(sess)
+        assert full["has_mana_command"] is True, full
+        assert len(full["turns"]) == 1, full
+        full_turn_ids = [t["id"] for t in full["turns"]]
+        full_trace_len = len(full["turns"][0]["tool_trace"])
+
+        # 增量解析：分多轮消费，结果必须与全量一致
+        st = _new_session_state(extract_session_id_from_stem(sess), str(sess))
+        rounds = 0
+        while st["offset"] < sess.stat().st_size and rounds < 50:
+            parse_session_jsonl(sess, state=st, max_bytes=64)
+            rounds += 1
+        inc = _session_info(st)
+        assert inc["has_mana_command"] is True, inc
+        assert [t["id"] for t in inc["turns"]] == full_turn_ids, (inc["turns"], full["turns"])
+        assert len(inc["turns"][0]["tool_trace"]) == full_trace_len, inc["turns"][0]["tool_trace"]
+        assert inc["session_id"] == full["session_id"], inc
+        assert rounds > 1, "分轮消费必须真的发生多轮（否则测不到增量路径）"
+
+        # 单 tick 预算：max_bytes 限制本轮消费；但必须保证有进展（不因单行超预算而死循环）
+        st2 = _new_session_state(extract_session_id_from_stem(sess), str(sess))
+        parse_session_jsonl(sess, state=st2, max_bytes=32)
+        assert st2["offset"] > 0, "预算受限的一轮也必须推进水位（不得零进展）"
+        assert st2["offset"] < sess.stat().st_size, "预算应让本轮无法读完整个文件"
+        rounds2 = 1
+        while st2["offset"] < sess.stat().st_size and rounds2 < 50:
+            parse_session_jsonl(sess, state=st2, max_bytes=32)
+            rounds2 += 1
+        assert st2["offset"] == sess.stat().st_size, (st2["offset"], sess.stat().st_size)
+        assert [t["id"] for t in _session_info(st2)["turns"]] == full_turn_ids, "预算分轮结果须与全量一致"
+
+        # 水位落盘/读回：偏移与回合必须可恢复
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        save_parse_state(repo, extract_session_id_from_stem(sess), st)
+        st_loaded = load_parse_state(repo, extract_session_id_from_stem(sess))
+        assert st_loaded["offset"] == st["offset"], (st_loaded["offset"], st["offset"])
+        assert len(st_loaded["turns"]) == len(st["turns"]), st_loaded["turns"]
+
+        # live 门控：live=False 时 watch_repo 立即返回，不进入轮询（Issue #128 方案 A）
+        import time as _time
+
+        t0 = _time.time()
+        watch_repo(repo, live=False)
+        assert _time.time() - t0 < 1.0, "live=False 时 watch_repo 必须立即返回"
+
     # 2. 验证 mana run 增量同步与幂等性 (dry-run, 零网络写入) + 会话 JSONL 蒸馏 + decisions.tsv
     with tempfile.TemporaryDirectory() as tmp:
         rdir = Path(tmp) / ".mana" / "run-88-demo"
@@ -1372,10 +1712,30 @@ def run_selftest() -> None:
     print("echo-discussion-sink selftest OK (redact + create + idempotent + nested replyToId + events.jsonl + session-based reflection + MANA_ECHO_LIVE gate)")
 
 
-def watch_repo(repo_dir: Path, live: bool, interval_sec: float = 3.0, max_idle_sec: float = 1800.0) -> None:
-    """单实例后台实时尾随守护：每 3s 扫描本仓活跃 session JSONL 与 repo/.mana/*/state.json，秒级反射到 echo 讨论区。"""
+def watch_repo(
+    repo_dir: Path,
+    live: bool,
+    interval_sec: float = 3.0,
+    max_idle_sec: float = 1800.0,
+) -> None:
+    """单实例后台实时尾随守护：每 3s 扫描本仓活跃 session JSONL 与 repo/.mana/*/state.json，秒级反射到 echo 讨论区。
+
+    Issue #128 的三道闸门：
+    1. **live 门控**：`live=False`（未设 `MANA_ECHO_LIVE`）时直接返回——dry-run 守护只写本地
+       假 id（`D_dryrun_*`），零线上效果，却要付全额解析 CPU。
+    2. **单 tick 解析预算**：每轮最多解析 `tick_budget_bytes` 字节（超出的留到下一轮），
+       并对单个超大文件设 `max_file_bytes` 上限——畸形大文件不得吃满单核。
+    3. **增量解析**：session JSONL 按字节偏移续读（见 `parse_session_jsonl`），CPU 与新增字节量
+       成正比，与文件总大小解耦。
+    """
+    if not live:
+        return
+
     import fcntl
     import hashlib
+
+    tick_budget_bytes = int(os.environ.get("MANA_ECHO_TICK_BUDGET_BYTES", 8 * 1024 * 1024))
+    max_file_bytes = int(os.environ.get("MANA_ECHO_MAX_FILE_BYTES", 256 * 1024 * 1024))
 
     mana_root = repo_dir / ".mana"
     repo_hash = hashlib.sha256(str(repo_dir.resolve()).encode("utf-8")).hexdigest()[:16]
@@ -1389,14 +1749,35 @@ def watch_repo(repo_dir: Path, live: bool, interval_sec: float = 3.0, max_idle_s
         while True:
             now = time.time()
             has_recent = False
+            budget_left = tick_budget_bytes
             # 1) 优先按 Session 粒度扫描当前仓库的 omp/pi 会话 JSONL
             for sess_file in discover_repo_sessions(repo_dir, max_age_sec=1200.0):
                 try:
-                    if (now - sess_file.stat().st_mtime) <= 1800:
+                    st = sess_file.stat()
+                    if (now - st.st_mtime) <= 1800:
                         has_recent = True
                 except OSError:
                     continue
-                safe_sync_session(sess_file, repo_dir=repo_dir, dry_run=not live)
+                if st.st_size > max_file_bytes:
+                    continue  # 超大文件跳过（不解析、不阻塞其余文件）
+                if budget_left <= 0:
+                    break
+                try:
+                    _, consumed = _sync_session_impl(
+                        sess_file,
+                        None,
+                        repo_dir,
+                        dry_run=not live,
+                        max_bytes=min(budget_left, max_file_bytes),
+                    )
+                except Exception as exc:  # 绝不因单个 session 失败而终止守护
+                    print(
+                        f"echo-discussion-sink: WARN: session 同步失败（已降级忽略）: "
+                        f"{redact(str(exc))}",
+                        file=sys.stderr,
+                    )
+                    continue
+                budget_left -= consumed
 
             # 2) 扫描 .mana/*/state.json（若已被某个 session 纳管并共享 discussion_id 则增量更新，否则按 run 兜底）
             if mana_root.is_dir():
