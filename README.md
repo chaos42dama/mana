@@ -273,6 +273,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 - `MANA_ECHO_LIVE=1` — 开启 `echo-discussion-sink.py` 线上写入 `41490/ipi` `echo` 讨论分类（默认未设时仅 dry-run 更新本地 `echo-state.json`；**未设时 `--watch-repo` 守护不启动**，避免空烧 CPU）
 - `MANA_ECHO_TICK_BUDGET_BYTES` — `--watch-repo` 每轮（3s tick）最多解析的字节数（默认 `8MiB`；超出的留到下一轮）
 - `MANA_ECHO_MAX_FILE_BYTES` — `--watch-repo` 单个 session JSONL 的体积上限（默认 `256MiB`；超限文件直接跳过，不解析）
+- `MANA_ECHO_LOG_DIR` — echo 守护 stderr 日志目录（默认 `~/.omp/agent/state/mana/echo/`；守护被三处以 `>/dev/null 2>&1` 拉起，异常一律落此目录，不静默）
 - `MANA_LANE_ALLOW_PATHS` — 工人 lane 允许写入的路径 glob/前缀白名单（`mana-worker.ts` 事前拦截越界 `write/edit`）
 
 ### 关键扩展（`extensions/pi/`）
