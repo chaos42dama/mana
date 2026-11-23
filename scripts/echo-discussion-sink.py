@@ -606,13 +606,35 @@ def format_root_body(
     return "\n".join(lines) + "\n"
 
 
+def evidence_to_text(evidence: Any) -> str:
+    """把 evidence 规整成纯文本。
+
+    `acceptance_output` / `verdict` 在 state.json 里可能是 dict（检查名 → 结果），
+    旧实现直接 `.strip()` 会抛 AttributeError 并让整条 lane 同步失败——线上写入因此全断。
+    """
+    if evidence is None:
+        return ""
+    if isinstance(evidence, str):
+        return evidence.strip()
+    if isinstance(evidence, dict):
+        parts = []
+        for key, value in evidence.items():
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False)
+            parts.append(f"{key}: {value}")
+        return "\n".join(parts).strip()
+    if isinstance(evidence, (list, tuple)):
+        return "\n".join(str(v) for v in evidence).strip()
+    return str(evidence).strip()
+
+
 def format_step_comment(
     seq: int,
     phase: str,
     title: str,
     summary: str,
     tool_trace: list[str] | None = None,
-    evidence: str | None = None,
+    evidence: Any = None,
     tokens: int | None = None,
 ) -> str:
     tok_badge = f" · `tokens≈{tokens}`" if tokens else ""
@@ -633,14 +655,15 @@ def format_step_comment(
                 "</details>",
             ]
         )
-    if evidence:
+    evidence_text = evidence_to_text(evidence)
+    if evidence_text:
         lines.extend(
             [
                 "",
                 "<details><summary>📎 验证 / 反射证据片段</summary>",
                 "",
                 "```text",
-                redact(evidence.strip()[:3000]),
+                redact(evidence_text[:3000]),
                 "```",
                 "</details>",
             ]
@@ -808,6 +831,9 @@ def _sync_mana_run_into_sink(
         sink.data["discussion_url"] = disc["url"]
         sink.data["title"] = title
         ops.append({"op": "createDiscussion", "title": title, "result": disc})
+        # 立即落盘 discussion_id：建帖之后的任何异常都不得让 id 丢失
+        # （丢失 ⇒ 下一 tick 重复建帖，线上可见的重复帖）。
+        sink.save()
 
     # 1) Lane 状态跃迁 -> 顶层 lane 锚点或二级回复 (方案 A；running 期间工具轨迹增量静默原地刷新)
     for ln in lanes:
@@ -1262,6 +1288,8 @@ def _sync_session_locked(
         sink.data["discussion_url"] = disc["url"]
         sink.data["title"] = title
         ops.append({"op": "createDiscussion", "session_id": session_id, "title": title, "result": disc})
+        # 立即落盘 discussion_id：建帖之后的任何异常都不得让 id 丢失（丢失 ⇒ 重复建帖）
+        sink.save()
 
     # 1) 同步本 session 中的每个用户指令回合 (turn)
     turn_comments: dict[str, Any] = sink.data.setdefault("turn_comments", {})
@@ -1511,6 +1539,48 @@ def run_selftest() -> None:
         t0 = _time.time()
         watch_repo(repo, live=False)
         assert _time.time() - t0 < 1.0, "live=False 时 watch_repo 必须立即返回"
+
+    # 1d. Issue #131：`acceptance_output` / `verdict` 可能是 dict（检查名→结果），
+    # 旧实现直接 `.strip()` 抛 AttributeError → 异常落在「建帖之后、落盘之前」→
+    # 每 tick 重复建帖且从不记住 id（线上可见的重复帖）。
+    assert evidence_to_text(None) == "", "None → 空文本"
+    assert evidence_to_text("  x  ") == "x", "字符串 → strip"
+    assert evidence_to_text({"a": "1", "b": "2"}) == "a: 1\nb: 2", "dict → 键值行"
+    assert evidence_to_text({"a": {"n": 1}}) == 'a: {"n": 1}', "dict 嵌套 → JSON 序列化"
+    assert evidence_to_text(["x", "y"]) == "x\ny", "list → 每行一项"
+    assert evidence_to_text(42) == "42", "数字 → 字符串"
+    body = format_step_comment(seq=1, phase="lane:x", title="t", summary="s", evidence={"k": "v"})
+    assert "k: v" in body, body
+
+    # 真实回归：run 级同步遇到 dict evidence 必须成功落盘 discussion_id（不重复建帖）
+    with tempfile.TemporaryDirectory() as tmp:
+        rdir = Path(tmp) / ".mana" / "run-dict-evidence"
+        rdir.mkdir(parents=True)
+        (rdir / "state.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-dict-evidence",
+                    "worker_model": "pi",
+                    "lanes": [
+                        {
+                            "id": "lane-1",
+                            "status": "landed",
+                            "attempt": 1,
+                            "acceptance_output": {"全量回归": "ALL-38-rc=0"},
+                            "verdict": {"ok": True},
+                        }
+                    ],
+                    "decision_log": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state_file = rdir / "echo-state.json"
+        ops = sync_mana_run(rdir, state_file, dry_run=True)
+        assert ops, "dict evidence 不得让整条 run 同步失败"
+        saved = json.loads(state_file.read_text(encoding="utf-8"))
+        assert saved.get("discussion_id"), "同步成功后必须落盘 discussion_id（否则每 tick 重复建帖）"
+        assert saved.get("last_error") is None, saved.get("last_error")
 
     # 2. 验证 mana run 增量同步与幂等性 (dry-run, 零网络写入) + 会话 JSONL 蒸馏 + decisions.tsv
     with tempfile.TemporaryDirectory() as tmp:
