@@ -54,6 +54,10 @@ const REQUIRED_SINK_SNIPPETS = [
   "prune_echo_artifacts",
   "PRUNE_RETENTION_DAYS",
   "--prune",
+  // Issue #131：dry-run 期留下的假 id 在 live 模式下必须作废（否则每 tick 刷错误日志 / 重复建帖）
+  "_is_dryrun_placeholder",
+  "MissingNodeError",
+  "archived_suppressed",
 ];
 
 function assertEchoContract({
@@ -151,6 +155,7 @@ function selfTest() {
     ["负例 5：移除单文件上限", "MANA_ECHO_MAX_FILE_BYTES", /MANA_ECHO_MAX_FILE_BYTES/],
     ["负例 6：移除 stderr 落盘", "attach_log", /attach_log/],
     ["负例 7：移除清理策略", "prune_echo_artifacts", /prune_echo_artifacts/],
+    ["负例 8：移除 dry-run 假 id 作废", "_is_dryrun_placeholder", /_is_dryrun_placeholder/],
   ]) {
     assert.throws(
       () =>
