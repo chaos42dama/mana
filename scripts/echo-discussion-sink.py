@@ -1868,6 +1868,40 @@ def watch_repo(
             time.sleep(interval_sec)
 
 
+def echo_log_dir() -> Path:
+    """echo 守护日志目录：`$MANA_ECHO_LOG_DIR` 或默认 `~/.omp/agent/state/mana/echo`。"""
+    raw = os.environ.get("MANA_ECHO_LOG_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".omp" / "agent" / "state" / "mana" / "echo"
+
+
+def attach_log(repo_hint: str) -> Path | None:
+    """把本进程的 stderr 落盘到 `<log-dir>/<repo-slug>.log`（追加，带大小上限）。
+
+    背景（Issue #131）：守护由 preflight / heartbeat / mana-compact 三处拉起，三处都用
+    `>/dev/null 2>&1` 丢弃 stderr —— 同步异常因此完全静默，线上重复建帖无人察觉。
+    这里在**脚本内部**接管自己的 stderr（dup2），不依赖调用方是否丢弃。
+    """
+    try:
+        d = echo_log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        slug = repo_hint.strip("/").replace("/", "-").replace(" ", "_") or "unknown"
+        path = d / f"{slug}.log"
+        max_bytes = 1 * 1024 * 1024
+        try:
+            if path.exists() and path.stat().st_size > max_bytes:
+                path.write_text("", encoding="utf-8")  # 超限即轮转（只留最新）
+        except OSError:
+            pass
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        os.dup2(fd, 2)  # 接管 stderr：此后所有 print(..., file=sys.stderr) 都进日志
+        os.close(fd)
+        return path
+    except Exception:
+        return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Sync agent execution steps to 41490/ipi echo Discussions")
     ap.add_argument("--self-test", action="store_true", help="Run offline self-test")
@@ -1889,6 +1923,14 @@ def main() -> None:
         new_off, events = distill_session_jsonl(args.distill_session.resolve(), out_path.resolve(), 0)
         print(json.dumps({"offset": new_off, "count": len(events), "out": str(out_path)}, ensure_ascii=False))
         return
+    # 后台/一次性调用的 stderr 落盘（守护被三处以 >/dev/null 2>&1 拉起，异常不得静默）
+    _log_hint = str(
+        args.watch_repo
+        or args.repo
+        or (args.sync_mana.parent.parent if args.sync_mana else "")
+        or (args.sync_session.parent if args.sync_session else "")
+    )
+    attach_log(_log_hint)
     if args.sync_session:
         sfile = args.sync_session.resolve()
         rdir = args.repo.resolve() if args.repo else None

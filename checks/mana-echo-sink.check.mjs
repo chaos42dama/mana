@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -44,6 +45,10 @@ const REQUIRED_SINK_SNIPPETS = [
   "load_parse_state",
   "save_parse_state",
   "max_bytes",
+  // Issue #131：守护 stderr 必须落盘（三处拉起方都用 >/dev/null 2>&1 丢弃，异常不得静默）
+  "MANA_ECHO_LOG_DIR",
+  "attach_log",
+  "dup2",
 ];
 
 function assertEchoContract({
@@ -139,6 +144,7 @@ function selfTest() {
     ["负例 3：移除 live 门控", "MANA_ECHO_TICK_BUDGET_BYTES", /MANA_ECHO_TICK_BUDGET_BYTES/],
     ["负例 4：移除增量解析水位", "save_parse_state", /save_parse_state/],
     ["负例 5：移除单文件上限", "MANA_ECHO_MAX_FILE_BYTES", /MANA_ECHO_MAX_FILE_BYTES/],
+    ["负例 6：移除 stderr 落盘", "attach_log", /attach_log/],
   ]) {
     assert.throws(
       () =>
@@ -348,6 +354,23 @@ function selfTest() {
     assert.ok(
       Date.now() - t0 < 5000,
       `live 门控：未设 MANA_ECHO_LIVE 时 --watch-repo 必须立即返回（实测 ${Date.now() - t0}ms）`,
+    );
+
+    // (f) Issue #131：stderr 落盘——守护被 >/dev/null 2>&1 拉起时，异常必须进日志文件
+    const logDir = join(scratch, "echo-logs");
+    const rFail2 = spawnSync(
+      "python3",
+      [join(REPO, "scripts/echo-discussion-sink.py"), "--sync-mana", join(scratch, "no-such-run")],
+      { env: { ...envDry, MANA_ECHO_LOG_DIR: logDir }, encoding: "utf8" },
+    );
+    assert.equal(rFail2.status, 0, rFail2.stderr);
+    assert.equal(rFail2.stderr, "", "stderr 已被接管进日志文件（不应再回吐到调用方）");
+    const logFiles = readdirSync(logDir);
+    assert.ok(logFiles.length > 0, "须生成 echo 守护日志文件");
+    const logText = readFileSync(join(logDir, logFiles[0]), "utf8");
+    assert.ok(
+      logText.includes("同步失败") && logText.includes("No such file or directory"),
+      `日志须记录同步异常（实际内容：${logText.slice(0, 200)}）`,
     );
 
     console.log(
