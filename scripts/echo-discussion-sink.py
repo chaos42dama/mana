@@ -1582,6 +1582,47 @@ def run_selftest() -> None:
         assert saved.get("discussion_id"), "同步成功后必须落盘 discussion_id（否则每 tick 重复建帖）"
         assert saved.get("last_error") is None, saved.get("last_error")
 
+    # 1e. Issue #131：echo 产物清理策略——日志与解析水位按保留期过期删除；
+    # **Discussion 状态（.mana/echo-sessions/）不得删**（删了会导致同一 session 重复建帖）。
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "repo"
+        pdir = repo / ".mana" / "echo-parse"
+        sdir = repo / ".mana" / "echo-sessions"
+        pdir.mkdir(parents=True)
+        sdir.mkdir(parents=True)
+        old_p = pdir / "old.json"
+        new_p = pdir / "new.json"
+        old_s = sdir / "oldsess.json"
+        old_p.write_text("{}", encoding="utf-8")
+        new_p.write_text("{}", encoding="utf-8")
+        old_s.write_text("{}", encoding="utf-8")
+        stale = time.time() - 30 * 86400
+        for p in (old_p, old_s):
+            os.utime(p, (stale, stale))
+        os.utime(new_p, None)  # 新文件不删
+
+        log_dir = Path(tmp) / "logs"
+        log_dir.mkdir()
+        old_log = log_dir / "old.log"
+        new_log = log_dir / "new.log"
+        old_log.write_text("x", encoding="utf-8")
+        new_log.write_text("x", encoding="utf-8")
+        os.utime(old_log, (stale, stale))
+        os.utime(new_log, None)
+
+        os.environ["MANA_ECHO_LOG_DIR"] = str(log_dir)
+        try:
+            counts = prune_echo_artifacts(repo_dir=repo, retention_days=14)
+        finally:
+            del os.environ["MANA_ECHO_LOG_DIR"]
+        assert counts["logs"] == 1, counts
+        assert counts["parse_state"] == 1, counts
+        assert not old_log.exists(), "过期日志须删除"
+        assert not old_p.exists(), "过期解析水位须删除"
+        assert new_log.exists(), "未过期日志须保留"
+        assert new_p.exists(), "未过期解析水位须保留"
+        assert old_s.exists(), "Discussion 状态（幂等依据）不得被清理"
+
     # 2. 验证 mana run 增量同步与幂等性 (dry-run, 零网络写入) + 会话 JSONL 蒸馏 + decisions.tsv
     with tempfile.TemporaryDirectory() as tmp:
         rdir = Path(tmp) / ".mana" / "run-88-demo"
@@ -1816,10 +1857,19 @@ def watch_repo(
         except BlockingIOError:
             return
         last_active = time.time()
+        last_prune = 0.0
+        prune_interval = float(os.environ.get("MANA_ECHO_PRUNE_INTERVAL_SEC", 3600))
         while True:
             now = time.time()
             has_recent = False
             budget_left = tick_budget_bytes
+            # 0) 周期性清理 echo 产物（默认每小时一次；日志与解析水位按保留期过期删除）
+            if now - last_prune >= prune_interval:
+                last_prune = now
+                try:
+                    prune_echo_artifacts(repo_dir=repo_dir)
+                except Exception:
+                    pass
             # 1) 优先按 Session 粒度扫描当前仓库的 omp/pi 会话 JSONL
             for sess_file in discover_repo_sessions(repo_dir, max_age_sec=1200.0):
                 try:
@@ -1876,6 +1926,59 @@ def echo_log_dir() -> Path:
     return Path.home() / ".omp" / "agent" / "state" / "mana" / "echo"
 
 
+# 清理策略（Issue #131）：echo 产物按「保留天数」过期删除，默认 14 天。
+# - 日志：只留最近 N 天；单文件另有 1MiB 上限轮转（attach_log）。
+# - 解析水位 `.mana/echo-parse/`：删了就退化为全量解析，不影响正确性。
+# - Discussion 状态 `.mana/echo-sessions/`：**不删**——它是"同一 session 复用同一帖"的
+#   幂等依据；删掉会导致同一 session 被重新建帖（线上重复帖，见 #131）。
+PRUNE_RETENTION_DAYS = 14
+PRUNE_TARGETS = ("logs", "parse_state")
+
+
+def _prune_files_older_than(paths: list[Path], cutoff: float) -> int:
+    removed = 0
+    for p in paths:
+        try:
+            if p.is_file() and p.stat().st_mtime < cutoff:
+                p.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def prune_echo_artifacts(
+    repo_dir: Path | None = None,
+    retention_days: int | None = None,
+    targets: tuple[str, ...] = PRUNE_TARGETS,
+) -> dict[str, int]:
+    """按保留期清理 echo 产物，返回各目标删除计数。
+
+    - `logs`：echo 守护 stderr 日志目录（`$MANA_ECHO_LOG_DIR`）。
+    - `parse_state`：仓内 `.mana/echo-parse/` 解析水位（丢了只退化为全量解析）。
+    - `session_state`（`.mana/echo-sessions/`）**不在清理范围内**：它是幂等依据，
+      删了会导致同一 session 重复建帖。
+    """
+    days = retention_days if retention_days is not None else PRUNE_RETENTION_DAYS
+    cutoff = time.time() - max(0, days) * 86400
+    counts = {"logs": 0, "parse_state": 0}
+    if "logs" in targets:
+        d = echo_log_dir()
+        if d.is_dir():
+            try:
+                counts["logs"] = _prune_files_older_than(list(d.glob("*.log")), cutoff)
+            except OSError:
+                pass
+    if "parse_state" in targets and repo_dir is not None:
+        pdir = repo_dir / ".mana" / "echo-parse"
+        if pdir.is_dir():
+            try:
+                counts["parse_state"] = _prune_files_older_than(list(pdir.glob("*.json")), cutoff)
+            except OSError:
+                pass
+    return counts
+
+
 def attach_log(repo_hint: str) -> Path | None:
     """把本进程的 stderr 落盘到 `<log-dir>/<repo-slug>.log`（追加，带大小上限）。
 
@@ -1913,10 +2016,28 @@ def main() -> None:
     ap.add_argument("--out", type=Path, help="Output .events.jsonl path for --distill-session")
     ap.add_argument("--live", action="store_true", help="Actually execute GraphQL mutations (or set MANA_ECHO_LIVE=1)")
     ap.add_argument("--dry-run", action="store_true", help="Force dry-run even if MANA_ECHO_LIVE=1")
+    ap.add_argument(
+        "--prune",
+        action="store_true",
+        help="只做清理：按保留期删除过期 echo 日志与解析水位（不联网、不写 Discussion）",
+    )
+    ap.add_argument(
+        "--prune-days",
+        type=int,
+        default=None,
+        help=f"清理保留天数（默认 {PRUNE_RETENTION_DAYS}）",
+    )
     args = ap.parse_args()
 
     if args.self_test:
         run_selftest()
+        return
+    if args.prune:
+        counts = prune_echo_artifacts(
+            repo_dir=args.repo.resolve() if args.repo else None,
+            retention_days=args.prune_days,
+        )
+        print(json.dumps({"ok": True, "pruned": counts}, ensure_ascii=False))
         return
     if args.distill_session:
         out_path = args.out or args.distill_session.with_suffix(".events.jsonl")

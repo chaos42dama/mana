@@ -260,7 +260,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 - `~/.omp/agent/skills/mana/scripts/check-mana-grant-scope.py` — tier 守卫（`--self-test` / `--paths` 预测 / `--base+--allow-key` 复核）
 - `~/.omp/agent/skills/mana/scripts/mana-preflight.sh` — run 预检（环境/pi 解析/线路/装机/配置/扩展自检）
 - `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh` — 心跳兜底（可 crontab 定时唤醒 sweep）
-- `~/.omp/agent/skills/mana/scripts/echo-discussion-sink.py` — `41490/ipi` Discussions `echo` 分类步进盖楼器与会话 JSONL 旁路蒸馏（方案 A 粒度，`MANA_ECHO_LIVE=1` 门控线上写入，未设时仅更新本地 `echo-state.json`）
+- `~/.omp/agent/skills/mana/scripts/echo-discussion-sink.py` — `41490/ipi` Discussions `echo` 分类步进盖楼器与会话 JSONL 旁路蒸馏（方案 A 粒度，`MANA_ECHO_LIVE=1` 门控线上写入，未设时仅更新本地 `echo-state.json`）；`--prune` 按保留期清理过期日志与解析水位（Discussion 状态不删——它是幂等依据）
 - `scripts/mana-install.sh` — 正本仓安装器（同步技能、references 与全局脚本）
 - `~/.omp/agent/skills/mana/scripts/mana-selftest.sh` — 全仓自检（`--quick` 为预检 d 门回归面）
 - `~/.omp/agent/skills/mana/scripts/check-mana-issue.py` — intake Issue 骨架校验（`exit 0` 才可授权）
@@ -274,6 +274,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 - `MANA_ECHO_TICK_BUDGET_BYTES` — `--watch-repo` 每轮（3s tick）最多解析的字节数（默认 `8MiB`；超出的留到下一轮）
 - `MANA_ECHO_MAX_FILE_BYTES` — `--watch-repo` 单个 session JSONL 的体积上限（默认 `256MiB`；超限文件直接跳过，不解析）
 - `MANA_ECHO_LOG_DIR` — echo 守护 stderr 日志目录（默认 `~/.omp/agent/state/mana/echo/`；守护被三处以 `>/dev/null 2>&1` 拉起，异常一律落此目录，不静默）
+- `MANA_ECHO_PRUNE_INTERVAL_SEC` — 守护内清理 echo 产物的周期（默认 `3600` 秒）
 - `MANA_LANE_ALLOW_PATHS` — 工人 lane 允许写入的路径 glob/前缀白名单（`mana-worker.ts` 事前拦截越界 `write/edit`）
 
 ### 关键扩展（`extensions/pi/`）
