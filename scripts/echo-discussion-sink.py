@@ -102,6 +102,10 @@ def is_live_enabled(cli_live: bool = False, cli_dry_run: bool = False, env: dict
     return False
 
 
+class MissingNodeError(RuntimeError):
+    """GraphQL 目标节点已不存在（帖子/评论被删）→ 本地水位里的 id 已失效。"""
+
+
 def gh_graphql(query: str, variables: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
     if dry_run:
         return {"dry_run": True, "query": query.strip().splitlines()[0], "variables": variables}
@@ -112,7 +116,10 @@ def gh_graphql(query: str, variables: dict[str, Any], dry_run: bool = False) -> 
         cmd.extend(["-F", f"{k}={v}"])
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if res.returncode != 0:
-        raise RuntimeError(f"gh api graphql failed ({res.returncode}): {res.stderr.strip()}")
+        stderr = res.stderr.strip()
+        if "Could not resolve to a node" in stderr:
+            raise MissingNodeError(stderr)
+        raise RuntimeError(f"gh api graphql failed ({res.returncode}): {stderr}")
     payload = json.loads(res.stdout)
     if "errors" in payload:
         raise RuntimeError(f"GraphQL errors: {json.dumps(payload['errors'], ensure_ascii=False)}")
@@ -606,6 +613,71 @@ def format_root_body(
     return "\n".join(lines) + "\n"
 
 
+def _purge_dryrun_comment_ids(sink: EchoSinkState, live: bool) -> int:
+    """live 模式下清除 sink 里 dry-run 期留下的假 comment id（`DC_dryrun_*`）。
+
+    这些 id 指向不存在的线上节点：留着会让每 tick 都去更新/回复不存在的节点，
+    刷满错误日志（实测 668 条/小时）。清掉后对应楼层会按「未建」重建一次真评论。
+    """
+    if not live:
+        return 0
+    removed = 0
+    for key in ("lane_Anchor_comments", "lane_last_comments", "turn_comments"):
+        entries = sink.data.get(key)
+        if not isinstance(entries, dict):
+            continue
+        for k in list(entries.keys()):
+            v = entries[k]
+            cid = v.get("id") if isinstance(v, dict) else v
+            if _is_dryrun_placeholder(cid):
+                entries.pop(k, None)
+                removed += 1
+    if removed:
+        sink.data["synced_lane_states"] = {}
+    return removed
+
+
+def _handle_missing_node(sink: EchoSinkState, run_dir: Path | None, dry_run: bool) -> None:
+    """线上帖/评论已被删除 → 本地水位失效。
+
+    清空 id 让下一轮重建；**归档 run 不重建**（否则会补出一批历史帖）。
+    """
+    sink.data["discussion_id"] = None
+    sink.data["discussion_number"] = None
+    sink.data["discussion_url"] = None
+    sink.data["lane_Anchor_comments"] = {}
+    sink.data["lane_last_comments"] = {}
+    sink.data["turn_comments"] = {}
+    sink.data["synced_lane_states"] = {}
+    if not dry_run and run_dir is not None and not _is_run_active(run_dir, active_window_sec=7200):
+        sink.data["archived_suppressed"] = True
+    sink.save()
+
+
+def _is_run_active(run_dir: Path, active_window_sec: float = 7200.0) -> bool:
+    """run 是否仍在活动窗口内（state.json 最近被写过）。
+
+    历史归档 run（终态且久未更新）不应在 live 模式下补建 Discussion ——
+    否则 dry-run 期积压的旧 run 会在开启 live 的瞬间一次刷出大量历史帖。
+    """
+    try:
+        mtime = (run_dir / "state.json").stat().st_mtime
+    except OSError:
+        return False
+    return (time.time() - mtime) <= active_window_sec
+
+
+def _is_dryrun_placeholder(node_id: Any) -> bool:
+    """判断节点 id 是否为 dry-run 留下的假 id（`D_dryrun_*` 帖 / `DC_dryrun_*` 评论）。
+
+    live 模式下这些 id 指向不存在的线上节点：继续用会让每 tick 都去更新不存在的节点，
+    刷满错误日志（实测 668 条/小时）。视作「未建」→ 重建真节点。
+    """
+    if not isinstance(node_id, str):
+        return False
+    return node_id.startswith("D_dryrun_") or node_id.startswith("DC_dryrun_")
+
+
 def evidence_to_text(evidence: Any) -> str:
     """把 evidence 规整成纯文本。
 
@@ -810,7 +882,31 @@ def _sync_mana_run_into_sink(
     turns = (session_meta or {}).get("turns") or []
     root_body = format_root_body(meta, lanes, turns=turns or None)
 
-    if not sink.data["discussion_id"]:
+    # live 模式下先清掉 dry-run 期留下的假 comment id（否则每 tick 去更新不存在的节点）
+    _purge_dryrun_comment_ids(sink, live=not dry_run)
+
+    stale_dryrun_id = _is_dryrun_placeholder(sink.data.get("discussion_id"))
+    if sink.data.get("archived_suppressed"):
+        # 历史归档 run 且从未上墙（dry-run 期只留下假 id）→ 永久抑制，不再补建帖
+        # （补建会在开启 live 的瞬间一次刷出大量历史帖，见 PR #98 的归档防刷楼守卫）
+        return [], meta, lanes
+    need_create = not sink.data.get("discussion_id")
+    if stale_dryrun_id and not dry_run:
+        # live 模式下 dry-run 期留下的假 id（`D_dryrun_*`）指向不存在的线上节点，
+        # 继续用会让每 tick 都去更新不存在的节点并刷错误日志 → 当作「没有 id」。
+        # **历史归档 run 不补建**：dry-run 期从未上墙的旧 run 若此时补帖，会一次刷出
+        # 大量历史帖（PR #98「历史终态归档防刷楼守卫」的同一诉求）→ 归档态永久抑制。
+        if not _is_run_active(run_dir, active_window_sec=7200):
+            sink.data["archived_suppressed"] = True
+            sink.save()
+            return [], meta, lanes
+        need_create = True
+        # 重建主帖 ⇒ 旧楼层锚点（comment id）一并作废，否则仍会去更新不存在的节点
+        sink.data["lane_Anchor_comments"] = {}
+        sink.data["lane_last_comments"] = {}
+        sink.data["turn_comments"] = {}
+        sink.data["synced_lane_states"] = {}
+    if need_create:
         res = gh_graphql(
             MUTATION_CREATE_DISCUSSION,
             {
@@ -849,9 +945,17 @@ def _sync_mana_run_into_sink(
             f"model=`{ln.get('model') or mana_state.get('worker_model') or '-'}`, "
             f"head_sha=`{ln.get('head_sha') or '-'}`)"
         )
-        if sink.data["synced_lane_states"].get(lid) in (key, legacy_key):
-            last_meta = (sink.data.get("lane_last_comments") or {}).get(lid) or {}
-            last_cid = last_meta.get("id")
+        last_meta = (sink.data.get("lane_last_comments") or {}).get(lid) or {}
+        last_cid = last_meta.get("id")
+        already_synced = sink.data["synced_lane_states"].get(lid) in (key, legacy_key)
+        if already_synced and _is_dryrun_placeholder(last_cid) and not dry_run:
+            # dry-run 期留下的假 comment id（`DC_dryrun_*`）在 live 模式指向不存在的节点
+            # → 视作未建楼层，走下面的新建分支（否则每 tick 报错刷日志）
+            sink.data["synced_lane_states"].pop(lid, None)
+            sink.data.setdefault("lane_last_comments", {}).pop(lid, None)
+            already_synced = False
+            last_cid = None
+        if already_synced:
             last_seq = int(last_meta.get("seq") or sink.data["step_seq"] or 1)
             last_tcount = int(last_meta.get("trace_count") or 0)
             last_ts = float(last_meta.get("updated_at") or 0.0)
@@ -893,6 +997,10 @@ def _sync_mana_run_into_sink(
             evidence=ln.get("acceptance_output") or ln.get("verdict"),
         )
         parent_id = sink.data["lane_Anchor_comments"].get(lid)
+        if _is_dryrun_placeholder(parent_id) and not dry_run:
+            # 锚点也是 dry-run 假 id → live 模式下不能用作 replyToId（节点不存在）
+            parent_id = None
+            sink.data["lane_Anchor_comments"].pop(lid, None)
         res = gh_graphql(
             MUTATION_ADD_COMMENT,
             {
@@ -1002,19 +1110,28 @@ def sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) -> list
     sink = EchoSinkState(state_file)
     if sink.data.get("managed_by_session") and not dry_run:
         return []
-    ops, meta, lanes = _sync_mana_run_into_sink(run_dir, sink, dry_run=dry_run, session_meta=None)
+    try:
+        ops, meta, lanes = _sync_mana_run_into_sink(run_dir, sink, dry_run=dry_run, session_meta=None)
+    except MissingNodeError:
+        # 线上帖/评论已被删除 → 本地水位失效：清空 id，归档 run 不补建
+        _handle_missing_node(sink, run_dir, dry_run)
+        return []
     title = f"[echo] mana · {meta['run_id']} · {meta['status']}"
     root_body = format_root_body(meta, lanes)
     if ops:
-        gh_graphql(
-            MUTATION_UPDATE_DISCUSSION,
-            {
-                "discussionId": sink.data["discussion_id"],
-                "title": title,
-                "body": root_body,
-            },
-            dry_run=dry_run,
-        )
+        try:
+            gh_graphql(
+                MUTATION_UPDATE_DISCUSSION,
+                {
+                    "discussionId": sink.data["discussion_id"],
+                    "title": title,
+                    "body": root_body,
+                },
+                dry_run=dry_run,
+            )
+        except MissingNodeError:
+            _handle_missing_node(sink, run_dir, dry_run)
+            return []
         ops.append({"op": "updateDiscussion", "title": title})
     sink.data["title"] = title
     sink.data["last_error"] = None
@@ -1217,6 +1334,24 @@ def _sync_session_locked(
     target_state_file: Path,
     dry_run: bool = True,
 ) -> list[dict[str, Any]]:
+    try:
+        return _sync_session_locked_body(
+            sess_info, session_path, resolved_repo, target_state_file, dry_run=dry_run
+        )
+    except MissingNodeError:
+        # 线上帖/评论已被删除 → 本地水位失效：清空 id，下一轮重建
+        sink = EchoSinkState(target_state_file)
+        _handle_missing_node(sink, resolved_repo, dry_run)
+        return []
+
+
+def _sync_session_locked_body(
+    sess_info: dict[str, Any],
+    session_path: Path,
+    resolved_repo: Path,
+    target_state_file: Path,
+    dry_run: bool = True,
+) -> list[dict[str, Any]]:
     sink = EchoSinkState(target_state_file)
 
     session_id = sess_info["session_id"]
@@ -1258,6 +1393,7 @@ def _sync_session_locked(
                 ex_data = json.loads(existing_echo.read_text(encoding="utf-8"))
                 if (
                     ex_data.get("discussion_id")
+                    and not _is_dryrun_placeholder(ex_data.get("discussion_id"))
                     and not sink.data.get("discussion_id")
                     and ex_data.get("managed_by_session") in (None, session_id)
                 ):
@@ -1267,7 +1403,12 @@ def _sync_session_locked(
             except Exception:
                 pass
 
-    if not sink.data["discussion_id"]:
+    stale_dryrun_id = _is_dryrun_placeholder(sink.data.get("discussion_id"))
+    if not sink.data["discussion_id"] or (stale_dryrun_id and not dry_run):
+        # dry-run 留下的假 id（`D_dryrun_*`）在 live 模式下指向不存在的线上帖 → 视为未建帖，重新建
+        if stale_dryrun_id:
+            # 重建主帖 ⇒ 旧楼层 id 一并作废，否则仍会去更新不存在的节点
+            sink.data["turn_comments"] = {}
         res = gh_graphql(
             MUTATION_CREATE_DISCUSSION,
             {
@@ -1292,6 +1433,8 @@ def _sync_session_locked(
         sink.save()
 
     # 1) 同步本 session 中的每个用户指令回合 (turn)
+    # live 模式下先清掉 dry-run 期留下的假 comment id（否则每 tick 去更新不存在的节点）
+    _purge_dryrun_comment_ids(sink, live=not dry_run)
     turn_comments: dict[str, Any] = sink.data.setdefault("turn_comments", {})
     for idx, turn in enumerate(turns, 1):
         tid = turn["id"]
@@ -1338,6 +1481,27 @@ def _sync_session_locked(
             ops.append({"op": "addDiscussionComment", "phase": f"session:turn-{idx}", "seq": seq, "turn_id": tid})
         else:
             prev_meta = turn_comments[tid]
+            if _is_dryrun_placeholder(prev_meta.get("id")) and not dry_run:
+                # dry-run 期留下的假 comment id → live 模式下节点不存在，视作未建楼层
+                turn_comments.pop(tid, None)
+                sink.data["step_seq"] += 1
+                seq = sink.data["step_seq"]
+                res = gh_graphql(
+                    MUTATION_ADD_COMMENT,
+                    {"discussionId": sink.data["discussion_id"], "body": body},
+                    dry_run=dry_run,
+                )
+                cnode = (res.get("addDiscussionComment") or {}).get("comment") or {
+                    "id": f"DC_dryrun_turn_{seq}"
+                }
+                turn_comments[tid] = {
+                    "id": cnode["id"],
+                    "seq": seq,
+                    "state_key": t_state_key,
+                    "updated_at": time.time(),
+                }
+                ops.append({"op": "addDiscussionComment", "phase": f"session:turn-{idx}", "seq": seq, "turn_id": tid})
+                continue
             if prev_meta.get("state_key") != t_state_key:
                 # 若回合刚完成 (done/error) 立即刷新；若仍在 running 则节流 15s 刷新
                 if t_status in ("done", "error") or (time.time() - float(prev_meta.get("updated_at") or 0) >= 15.0) or dry_run:
@@ -1622,6 +1786,16 @@ def run_selftest() -> None:
         assert new_log.exists(), "未过期日志须保留"
         assert new_p.exists(), "未过期解析水位须保留"
         assert old_s.exists(), "Discussion 状态（幂等依据）不得被清理"
+
+    # 1f. Issue #131：dry-run 期留下的假 id（帖 `D_dryrun_*` / 评论 `DC_dryrun_*`）在 live 模式下
+    # 指向不存在的线上节点 → 必须作废；已删除的线上节点（MissingNodeError）也要作废。
+    assert _is_dryrun_placeholder("D_dryrun_root") is True
+    assert _is_dryrun_placeholder("D_dryrun_sess_01a1f7cb") is True
+    assert _is_dryrun_placeholder("DC_dryrun_1") is True
+    assert _is_dryrun_placeholder("DC_dryrun_turn_4") is True
+    assert _is_dryrun_placeholder("D_kwDOThYpRs4AraMB") is False, "真 id 不得误判"
+    assert _is_dryrun_placeholder(None) is False
+    assert _is_dryrun_placeholder(123) is False
 
     # 2. 验证 mana run 增量同步与幂等性 (dry-run, 零网络写入) + 会话 JSONL 蒸馏 + decisions.tsv
     with tempfile.TemporaryDirectory() as tmp:
