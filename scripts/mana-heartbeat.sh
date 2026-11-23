@@ -107,6 +107,8 @@ sweep_repo() {
 
   if [[ -f "$ECHO_SINK" ]]; then
     nohup python3 "$ECHO_SINK" --watch-repo "$repo" >/dev/null 2>&1 </dev/null &
+    # 清理 echo 产物（过期日志与解析水位；Discussion 状态不删——它是幂等依据）
+    python3 "$ECHO_SINK" --prune --repo "$repo" >/dev/null 2>&1 || true
     local _slug="--$(printf '%s' "$repo" | sed 's#^/##; s#/#-#g')--"
     for _sess in "$HOME/.omp/agent/sessions/$_slug"/2026-10-23*.jsonl "$HOME/.pi/agent/sessions/$_slug"/2026-10-23*.jsonl; do
       [[ -f "$_sess" ]] || continue

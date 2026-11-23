@@ -16,6 +16,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,6 +50,10 @@ const REQUIRED_SINK_SNIPPETS = [
   "MANA_ECHO_LOG_DIR",
   "attach_log",
   "dup2",
+  // Issue #131：echo 产物清理策略（保留期 + 排除 Discussion 状态）
+  "prune_echo_artifacts",
+  "PRUNE_RETENTION_DAYS",
+  "--prune",
 ];
 
 function assertEchoContract({
@@ -145,6 +150,7 @@ function selfTest() {
     ["负例 4：移除增量解析水位", "save_parse_state", /save_parse_state/],
     ["负例 5：移除单文件上限", "MANA_ECHO_MAX_FILE_BYTES", /MANA_ECHO_MAX_FILE_BYTES/],
     ["负例 6：移除 stderr 落盘", "attach_log", /attach_log/],
+    ["负例 7：移除清理策略", "prune_echo_artifacts", /prune_echo_artifacts/],
   ]) {
     assert.throws(
       () =>
@@ -371,6 +377,49 @@ function selfTest() {
     assert.ok(
       logText.includes("同步失败") && logText.includes("No such file or directory"),
       `日志须记录同步异常（实际内容：${logText.slice(0, 200)}）`,
+    );
+
+    // (g) Issue #131：清理策略——过期日志与解析水位被删，Discussion 状态（幂等依据）保留
+    const pruneDir = join(scratch, "prune-repo");
+    const parseDir = join(pruneDir, ".mana", "echo-parse");
+    const sessStateDir = join(pruneDir, ".mana", "echo-sessions");
+    mkdirSync(parseDir, { recursive: true });
+    mkdirSync(sessStateDir, { recursive: true });
+    const stale = Date.now() / 1000 - 30 * 86400;
+    for (const [p, isStale] of [
+      [join(parseDir, "old.json"), true],
+      [join(parseDir, "new.json"), false],
+      [join(sessStateDir, "keep.json"), true],
+    ]) {
+      writeFileSync(p, "{}");
+      if (isStale) utimesSync(p, stale, stale);
+    }
+    const pruneLogs = join(scratch, "prune-logs");
+    mkdirSync(pruneLogs, { recursive: true });
+    writeFileSync(join(pruneLogs, "old.log"), "x");
+    utimesSync(join(pruneLogs, "old.log"), stale, stale);
+    const rPrune = spawnSync(
+      "python3",
+      [
+        join(REPO, "scripts/echo-discussion-sink.py"),
+        "--prune",
+        "--repo",
+        pruneDir,
+        "--prune-days",
+        "14",
+      ],
+      { env: { ...envDry, MANA_ECHO_LOG_DIR: pruneLogs }, encoding: "utf8" },
+    );
+    assert.equal(rPrune.status, 0, rPrune.stderr);
+    const outPrune = JSON.parse(rPrune.stdout);
+    assert.equal(outPrune.ok, true, rPrune.stdout);
+    assert.equal(outPrune.pruned.logs, 1, "过期日志须被清理");
+    assert.equal(outPrune.pruned.parse_state, 1, "过期解析水位须被清理");
+    assert.ok(!existsSync(join(parseDir, "old.json")), "过期解析水位须删除");
+    assert.ok(existsSync(join(parseDir, "new.json")), "未过期解析水位须保留");
+    assert.ok(
+      existsSync(join(sessStateDir, "keep.json")),
+      "Discussion 状态（幂等依据）不得被清理——删了会重复建帖",
     );
 
     console.log(
