@@ -34,6 +34,7 @@
 | 契约无常驻 drill，drill 随 run 结束失传 | drill 常驻在 `checks/*.check.mjs --self-test`（#31 起） | #28（复发 #29） |
 | herdr/gh CLI 参数形态误用 | §2 参数形态说明 + `checks/mana-orchestrator-contract.check.mjs`（CLI 形态断言：agent prompt/agent wait/pane split/agent start） | #27 |
 | `--wait` 超时被误当未投递 | §2「先 `agent get/read` 取证，不得重复 prompt」+ `checks/mana-orchestrator-contract.check.mjs`（超时 ≠ 未投递断言） | #24（复发 #27/#28/#29） |
+| 编排者按静默时长/记录数/文件 mtime 误判 worker 停滞（上游 502 与读循环特征相同，只有屏幕原文能区分） | §3「怀疑停滞先 read 屏」硬序 + 重试分类表互斥判据 + `checks/mana-orchestrator-contract.check.mjs`（断言「怀疑停滞先 read 屏」/ `herdr agent read <worker> --source visible` / 「静默时长与会话记录数不能区分这两类」+ 负例真失败） | #129 |
 | 用 fifo/管道喂命令建持锁会话，留下握锁孤儿；收尾只用 `pgrep -af 'mana-run-lock'` 判净（exec 后 cmdline 无脚本名 ⇒ 假阴性） | §0 持锁入口禁 fifo + `scripts/mana-run-audit.py`（按锁 inode 扫 `/proc/*/fd`）+ §4 第 6 步收尾必跑 + `checks/mana-run-teardown.check.mjs`（真进程 drill：`--self-test` 复现孤儿，断言 pgrep 0 命中而审计 DIRTY，kill 后转 CLEAN） | nrc#3 |
 | 回归面手工枚举漏项 | `checks/all.check.mjs` 单命令覆盖（全部契约 check × 两种模式一次跑完，不早退） | #57 |
 | `/mana architect` 的多线路设计入口与两份 references 不得被静默删改 | `checks/mana-architect-contract.check.mjs`（8 组断言）+ `scripts/mana-install.sh`（references glob 映射） | #55 |
