@@ -106,7 +106,73 @@ class MissingNodeError(RuntimeError):
     """GraphQL 目标节点已不存在（帖子/评论被删）→ 本地水位里的 id 已失效。"""
 
 
-def gh_graphql(query: str, variables: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
+class TransientGraphQLError(RuntimeError):
+    """GitHub 侧瞬时故障（服务端 5xx / 限流 / 超时）→ 可重试，非本地状态问题。"""
+
+
+# GitHub 侧瞬时故障的特征串：命中即视为可重试，而非"本地数据坏了"。
+TRANSIENT_ERROR_MARKERS = (
+    "Something went wrong while executing your query",
+    "was submitted too quickly",
+    "secondary rate limit",
+    "Please wait a few minutes before you try again",
+    "ETIMEDOUT",
+    "timeout awaiting",
+    "connection reset",
+    "502 Bad Gateway",
+    "503 Service Unavailable",
+    "504 Gateway",
+)
+
+# 错误日志去重窗口：同一根因在窗口内只打一行，避免 3s tick 把日志刷爆。
+WARN_DEDUP_WINDOW_SEC = float(os.environ.get("MANA_ECHO_WARN_DEDUP_SEC", 300.0))
+_WARN_SEEN: dict[str, tuple[float, int]] = {}
+# 归一化：抹掉随每次请求变化的噪声（时间戳、GitHub 错误追踪码），否则同根因每次都是新 key。
+_VOLATILE_RE = re.compile(r"Please include `[^`]*`|\d{4}-\d{2}-\d{2}T[\d:.+-]+Z?")
+
+
+def _is_transient_error(stderr: str) -> bool:
+    """判断 stderr 是否为 GitHub 侧瞬时故障（可重试）。"""
+    return any(marker in stderr for marker in TRANSIENT_ERROR_MARKERS)
+
+
+def _normalize_warn_key(msg: str) -> str:
+    """把消息归一成稳定的去重 key（同根因 → 同 key）。"""
+    return _VOLATILE_RE.sub("#", msg)[:160]
+
+
+def log_warn(msg: str, key: str | None = None) -> bool:
+    """输出一行 WARN；同一 key 在去重窗口内重复出现时只累加计数，不重复打印。
+
+    返回 True=本次真的打印了，False=被抑制（供自检断言）。
+    """
+    k = key or _normalize_warn_key(msg)
+    now = time.time()
+    last, count = _WARN_SEEN.get(k, (0.0, 0))
+    if count > 0 and (now - last) < WARN_DEDUP_WINDOW_SEC:
+        _WARN_SEEN[k] = (last, count + 1)
+        return False
+    suffix = (
+        f"（近 {int(WARN_DEDUP_WINDOW_SEC)}s 内同类错误已重复 {count} 次，本次只记首条）"
+        if count
+        else ""
+    )
+    print(f"echo-discussion-sink: WARN: {msg}{suffix}", file=sys.stderr)
+    _WARN_SEEN[k] = (now, 1)
+    return True
+
+
+def gh_graphql(
+    query: str,
+    variables: dict[str, Any],
+    dry_run: bool = False,
+    retries: int = 2,
+    backoff_sec: float = 0.4,
+) -> dict[str, Any]:
+    """执行 GraphQL；对 GitHub 侧瞬时故障做有限次退避重试。
+
+    瞬时故障（服务端 5xx / 限流 / 超时）重试即可恢复，不应让整轮同步失败并刷屏。
+    """
     if dry_run:
         return {"dry_run": True, "query": query.strip().splitlines()[0], "variables": variables}
     cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
@@ -114,16 +180,28 @@ def gh_graphql(query: str, variables: dict[str, Any], dry_run: bool = False) -> 
         if v is None:
             continue
         cmd.extend(["-F", f"{k}={v}"])
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if res.returncode != 0:
-        stderr = res.stderr.strip()
-        if "Could not resolve to a node" in stderr:
-            raise MissingNodeError(stderr)
-        raise RuntimeError(f"gh api graphql failed ({res.returncode}): {stderr}")
-    payload = json.loads(res.stdout)
-    if "errors" in payload:
-        raise RuntimeError(f"GraphQL errors: {json.dumps(payload['errors'], ensure_ascii=False)}")
-    return payload.get("data") or {}
+    last_err = ""
+    for attempt in range(retries + 1):
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            payload = json.loads(res.stdout)
+            if "errors" in payload:
+                last_err = f"GraphQL errors: {json.dumps(payload['errors'], ensure_ascii=False)}"
+                if _is_transient_error(last_err) and attempt < retries:
+                    time.sleep(backoff_sec * (attempt + 1))
+                    continue
+                raise RuntimeError(last_err)
+            return payload.get("data") or {}
+        last_err = res.stderr.strip()
+        if "Could not resolve to a node" in last_err:
+            raise MissingNodeError(last_err)
+        if _is_transient_error(last_err):
+            if attempt < retries:
+                time.sleep(backoff_sec * (attempt + 1))
+                continue
+            raise TransientGraphQLError(f"gh api graphql failed ({res.returncode}): {last_err}")
+        raise RuntimeError(f"gh api graphql failed ({res.returncode}): {last_err}")
+    raise RuntimeError(f"gh api graphql failed: {last_err}")
 
 
 MUTATION_CREATE_DISCUSSION = """
@@ -1577,7 +1655,7 @@ def safe_sync_session(
         return {"ok": True, "dry_run": dry_run, "session_path": str(session_path), "ops": ops}
     except Exception as exc:
         err_msg = redact(str(exc))
-        print(f"echo-discussion-sink: WARN: session 同步失败（已降级忽略）: {err_msg}", file=sys.stderr)
+        log_warn(f"session 同步失败（已降级忽略）: {err_msg}")
         return {"ok": False, "dry_run": dry_run, "error": err_msg, "ops": []}
 
 
@@ -1588,7 +1666,7 @@ def safe_sync_mana_run(run_dir: Path, state_file: Path, dry_run: bool = True) ->
         return {"ok": True, "dry_run": dry_run, "ops": ops}
     except Exception as exc:
         err_msg = redact(str(exc))
-        print(f"echo-discussion-sink: WARN: 同步失败（已降级忽略，不阻断主流程）: {err_msg}", file=sys.stderr)
+        log_warn(f"同步失败（已降级忽略，不阻断主流程）: {err_msg}")
         try:
             sink = EchoSinkState(state_file)
             sink.data["last_error"] = err_msg
@@ -1796,6 +1874,36 @@ def run_selftest() -> None:
     assert _is_dryrun_placeholder("D_kwDOThYpRs4AraMB") is False, "真 id 不得误判"
     assert _is_dryrun_placeholder(None) is False
     assert _is_dryrun_placeholder(123) is False
+
+    # 1g. Issue #131：GitHub 侧瞬时故障须可识别（可重试），且错误日志按根因去重不刷屏
+    assert _is_transient_error(
+        "gh: Something went wrong while executing your query on 2026-11-23T10:19:26Z. "
+        "Please include `EB0E:33FA5:22F8020` when reporting this issue."
+    ) is True, "服务端 5xx 须判为瞬时故障"
+    assert _is_transient_error("was submitted too quickly") is True
+    assert _is_transient_error("503 Service Unavailable") is True
+    assert _is_transient_error("Could not resolve to a node with the global id of 'X'") is False, "节点不存在不是瞬时故障"
+    assert _is_transient_error("validation failed") is False
+
+    # 同根因去重：时间戳/追踪码不同也算同一 key
+    k1 = _normalize_warn_key(
+        "gh: Something went wrong while executing your query on 2026-11-23T10:19:26Z. "
+        "Please include `EB0E:33FA5` when reporting this issue."
+    )
+    k2 = _normalize_warn_key(
+        "gh: Something went wrong while executing your query on 2026-11-23T10:19:59Z. "
+        "Please include `EB0E:99BB11` when reporting this issue."
+    )
+    assert k1 == k2, (k1, k2)
+
+    _WARN_SEEN.clear()
+    try:
+        assert log_warn("boom A", key="t-dedup") is True, "首条必须打印"
+        assert log_warn("boom A", key="t-dedup") is False, "窗口内重复必须被抑制"
+        assert log_warn("boom A", key="t-dedup") is False
+        assert log_warn("boom B", key="t-other") is True, "不同 key 不互相抑制"
+    finally:
+        _WARN_SEEN.clear()
 
     # 2. 验证 mana run 增量同步与幂等性 (dry-run, 零网络写入) + 会话 JSONL 蒸馏 + decisions.tsv
     with tempfile.TemporaryDirectory() as tmp:
@@ -2065,10 +2173,8 @@ def watch_repo(
                         max_bytes=min(budget_left, max_file_bytes),
                     )
                 except Exception as exc:  # 绝不因单个 session 失败而终止守护
-                    print(
-                        f"echo-discussion-sink: WARN: session 同步失败（已降级忽略）: "
-                        f"{redact(str(exc))}",
-                        file=sys.stderr,
+                    log_warn(
+                        f"session 同步失败（已降级忽略）: {redact(str(exc))}",
                     )
                     continue
                 budget_left -= consumed
