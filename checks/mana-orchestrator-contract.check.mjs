@@ -6,7 +6,8 @@
 //         -- --exclude-tools ask_question 且命令模板不含 --model）、超时 ≠ 未投递（先 agent
 //         get/read，不得重复 prompt）、不锁线（§2 dispatch「不带 --model」+ §5 自检断言句）、
 //         交付洁净（§3 绑 SHA 前先查工作树 + git status --short + brief 模板附原文）、
-//         回收双验证（agent get + pane get 双 not_found）。
+//         回收双验证（agent get + pane get 双 not_found）、
+//         怀疑停滞先 read 屏（§3 硬序 + 重试表「静默时长与会话记录数不能区分」）。
 //         环境变量 MANA_ORCH_CONTRACT_SKILL 可覆盖待检 SKILL.md 路径（live drill 用）。
 //         注：`herdr worktree remove --workspace <ID>` 形态未在 SKILL.md 成文（Issue #50 核实），
 //         故不断言，待原文落文后再补。
@@ -89,6 +90,27 @@ const GROUPS = [
       "再以 `agent get`、`pane get` 双 `not_found` 验证",
     ],
   },
+  {
+    name: "怀疑停滞先 read 屏",
+    required: [
+      "怀疑停滞先 read 屏",
+      "凡怀疑 worker 停滞",
+      "`herdr agent read <worker> --source visible`",
+      "看完屏幕原文才允许归",
+      "静默时长与会话记录数不能区分这两类",
+    ],
+    negative(skill, label) {
+      const s3 = skill.split("## §3")[1] ?? "";
+      assert.ok(
+        s3.includes("怀疑停滞先 read 屏"),
+        `${label}【怀疑停滞先 read 屏】：硬序必须写在 §3，不在其它节`,
+      );
+      assert.ok(
+        s3.includes("`herdr agent read <worker> --source visible`"),
+        `${label}【怀疑停滞先 read 屏】：§3 缺 \`herdr agent read <worker> --source visible\``,
+      );
+    },
+  },
 ];
 
 function assertOrchestratorContract(skill, label) {
@@ -115,12 +137,13 @@ function selfTest() {
     "4. `verified` lane 立即 `herdr pane close <pane-id>`，再以 `agent get`、`pane get` 双 `not_found` 验证，状态置 `reclaimed`。",
     "- lane 验收后关闭 pane：随后 `herdr agent get <name>` 和 `herdr pane get <pane-id>` 必须均为 `not_found`。",
     "- run 自检：`herdr agent start` 命令**不含** `--model`。",
+    "## §3 监督\n- **怀疑停滞先 read 屏**：凡怀疑 worker 停滞——无论依据是静默时长、会话记录数不增、文件 mtime 未变还是任何统计特征——第一动作必须是 `herdr agent read <worker> --source visible`。看完屏幕原文才允许归 `retry_mode`。**静默时长与会话记录数不能区分这两类**。",
   ].join("\n");
 
   // 正例：完整版必须通过
   assertOrchestratorContract(full, "合成完整版");
   for (const g of GROUPS) console.log(`  ✓ ${g.name}`);
-  console.log("✓ 合成完整版：编排者契约 7 组断言全部通过");
+  console.log("✓ 合成完整版：编排者契约 8 组断言全部通过");
 
   // 负例：每组删掉一条关键原文 → 检查必须失败
   for (const g of GROUPS) {
@@ -131,6 +154,17 @@ function selfTest() {
       `${g.name}：删关键原文后检查必须失败`,
     );
     console.log(`  ✗ ${g.name}：删「${g.required[0]}」→ 检查失败（负例证据）`);
+  }
+
+  const stall = GROUPS.find((g) => g.name === "怀疑停滞先 read 屏");
+  for (const snippet of stall.required.slice(1)) {
+    const broken = full.replace(snippet, "");
+    assert.throws(
+      () => assertOrchestratorContract(broken, "合成残缺版"),
+      (err) => err.message.includes(snippet.slice(0, 20)),
+      `怀疑停滞先 read 屏：删「${snippet}」后检查必须失败`,
+    );
+    console.log(`  ✗ 怀疑停滞先 read 屏：删「${snippet}」→ 检查失败（负例证据）`);
   }
 
   // 额外负例：另加一条含 --model 的 agent start 命令模板 → 不锁线负向断言必须失败
@@ -146,7 +180,17 @@ function selfTest() {
     "  ✗ 不锁线（负向）：agent start 命令模板插入 --model → 检查失败（负例证据）",
   );
 
-  console.log("✓ 合成 drill 通过：完整版过；每组残缺版败；--model 锁线负例败");
+  const stallNoSection = full.replace("## §3 监督\n", "");
+  assert.throws(
+    () => assertOrchestratorContract(stallNoSection, "合成错位版"),
+    (err) => err.message.includes("硬序必须写在 §3"),
+    "硬序不在 §3 时检查必须失败",
+  );
+  console.log(
+    "  ✗ 怀疑停滞先 read 屏（错位）：硬序移出 §3 → 检查失败（负例证据）",
+  );
+
+  console.log("✓ 合成 drill 通过：完整版过；每组残缺版败；--model 锁线负例败；§3 错位负例败");
 }
 
 if (process.argv.includes("--self-test")) {
@@ -160,6 +204,6 @@ if (process.argv.includes("--self-test")) {
     `SKILL.md（${skillPath}）`,
   );
   console.log(
-    "✓ SKILL.md 编排者侧契约断言通过（CLI 形态/超时≠未投递/不锁线/交付洁净/回收双验证）",
+    "✓ SKILL.md 编排者侧契约断言通过（CLI 形态/超时≠未投递/不锁线/交付洁净/回收双验证/怀疑停滞先 read 屏）",
   );
 }

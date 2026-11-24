@@ -169,10 +169,12 @@ description: "OMP orchestrator + Herdr Pi 工人的自主工程流程（/mana）
 
      | `retry_mode` | 识别信号 | 动作 | 消耗 `max_rounds` | 消耗墙钟 | 记什么 |
      | --- | --- | --- | --- | --- | --- |
-     | `network` | 传输/超时类瞬时错误（prompt 未投递、连接中断） | 原样重投同一 lane 同一 brief | 否 | 是 | `decision_log` 一行 |
-     | `context-overflow` | 上下文溢出 / compact 丢失协议 | 先按 §0.7 跑 compaction 扩展自检取证，再缩小文件边界后重投 | 是 | 是 | `decision_log`（含取证与新边界） |
+     | `network` | 屏幕原文含 `502` / `timeout` / 连接错误 / `rate limit`（含 prompt 未投递、连接中断） | 原样重投同一 lane 同一 brief | 否 | 是 | `decision_log` 一行 |
+     | `context-overflow` | 屏幕显示反复 `read`/`sed -n` 同一文件、或 `compact` 相关提示、或上下文百分比异常回落 | 先按 §0.7 跑 compaction 扩展自检取证，再缩小文件边界后重投 | 是 | 是 | `decision_log`（含取证与新边界） |
      | `tool-error` | 工具/宿主侧确定性错误 | 记 `state.blocker` + 原文；**不自动换线**（CTO 决策：工人只用 pi 默认线路，编排者仅按 §2 回读取证），也不自行换 brief 反复试 | 否 | 否（记账后即上报） | `state.blocker` + `decision_log` |
      | `none` | 无可重试的失败 / 不许重试 | 不重试，直接置终态 `blocked`/`failed` | — | — | 终态 + `decision_log` |
+
+     **静默时长与会话记录数不能区分这两类**（`network` vs `context-overflow`）：归类必须看屏幕原文，禁止仅凭静默时长、会话记录数不增、文件 mtime 未变等统计特征判定。
 
    - **墙钟超时不等于失败**：超过 `max_wall_minutes` 时不得直接判 `blocked`/`failed`，必须先 `herdr agent get`/`read` 取证，再按 §0.7 裁决（prompt 未投递 / 配置漂移 / 真 `BLOCKED:`）；裁决结果写 `decision_log`，取证仍无定论才置 `blocked`。
    - **并发上限**：state 顶层 `max_parallel_lanes`（默认 2）只约束**同时处于 `running` 的 code lane 数**，readonly lane 不计入；达到上限时新 lane 保持 `planned`，直到有 code lane 离开 `running` 再派发。
@@ -277,7 +279,9 @@ Issue #8 验收原文：
    used_hash=$(git hash-object skills/mana/SKILL.md)                                 # 在用版 hash
    ```
 
-3. **读 lane 事件**：优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。每次会话触发 `/mana` 指令或 sweep 时旁路调用 `~/.omp/agent/skills/mana/scripts/echo-discussion-sink.py`（`--sync-session <session.jsonl>` / `--sync-mana "$run_dir"`）：采用 **Session 级 + 方案 A 粒度**——1 个 Session（`omp`/`pi` 会话 `.jsonl` 文件，每次 `/new` 新建会话或 `/q` 退出重启进程生成新 `session_id`）对应 `41490/ipi` Discussions `echo` 分类 `R_kgDOThYpRg` / `DIC_kwDOThYpRs4DBz3d` 下 1 个主帖动态看板（状态存 `<repo>/.mana/echo-sessions/<session_id>.json`），同一 session 内的 `/mana` 指令回合（含 `recall`/`how`/`why`/`run`）与所调度的仅按 Lane 状态跃迁 `planned -> running -> verified/blocked/reclaimed` 与 `decisions.tsv` / `decision_log` 反射及验收事件追加回复楼层，Lane 内事件用 `replyToId` 挂在该 Lane 顶层评论下；通过环境变量 `MANA_ECHO_LIVE=1` 门控线上写入，未设时仅维护本地 `.mana/<run-id>/echo-state.json` 与 `lanes/<lane-id>.events.jsonl`，任何网络或限流失败只记日志、绝不阻断 `mana` 主流程）。`--watch-repo` 守护仅在 `MANA_ECHO_LIVE=1` 时启动（未设时立即返回，不空烧 CPU）；session JSONL 按字节偏移增量解析（水位落 `.mana/echo-parse/<session_id>.json`），每轮解析量受 `MANA_ECHO_TICK_BUDGET_BYTES`（默认 8MiB）与单文件上限 `MANA_ECHO_MAX_FILE_BYTES`（默认 256MiB）约束；引用 Issue #128。
+3. **读 lane 事件**：优先用 `herdr agent wait <worker>`（可带 `--timeout`）事件驱动阻塞等待来收 lane 事件，不空转；（编排者 pane 意外空闲时）由 `~/.omp/agent/skills/mana/scripts/mana-heartbeat.sh`（可 crontab 定时的心跳兜底）负责唤醒 sweep；引用 Issue #9。每次会话触发 `/mana` 指令或 sweep 时旁路调用 `~/.omp/agent/skills/mana/scripts/echo-discussion-sink.py`（`--sync-session <session.jsonl>` / `--sync-mana "$run_dir"`）：采用 **Session 级 + 方案 A 粒度**——1 个 Session（`omp`/`pi` 会话 `.jsonl` 文件，每次 `/new` 新建会话或 `/q` 退出重启进程生成新 `session_id`）对应 `41490/ipi` Discussions `echo` 分类 `R_kgDOThYpRg` / `DIC_kwDOThYpRs4DBz3d` 下 1 个主帖动态看板（状态存 `<repo>/.mana/echo-sessions/<session_id>.json`），同一 session 内的 `/mana` 指令回合（含 `recall`/`how`/`why`/`run`）与所调度的仅按 Lane 状态跃迁 `planned -> running -> verified/blocked/reclaimed` 与 `decisions.tsv` / `decision_log` 反射及验收事件追加回复楼层，Lane 内事件用 `replyToId` 挂在该 Lane 顶层评论下；通过环境变量 `MANA_ECHO_LIVE=1` 门控线上写入，未设时仅维护本地 `.mana/<run-id>/echo-state.json` 与 `lanes/<lane-id>.events.jsonl`，任何网络或限流失败只记日志、绝不阻断 `mana` 主流程）。   `--watch-repo` 守护仅在 `MANA_ECHO_LIVE=1` 时启动（未设时立即返回，不空烧 CPU）；session JSONL 按字节偏移增量解析（水位落 `.mana/echo-parse/<session_id>.json`），每轮解析量受 `MANA_ECHO_TICK_BUDGET_BYTES`（默认 8MiB）与单文件上限 `MANA_ECHO_MAX_FILE_BYTES`（默认 256MiB）约束；引用 Issue #128。
+
+**怀疑停滞先 read 屏**：凡怀疑 worker 停滞——无论依据是静默时长、会话记录数不增、文件 mtime 未变还是任何统计特征——第一动作必须是 `herdr agent read <worker> --source visible`。看完屏幕原文才允许归 `retry_mode`。本条把「先 `herdr agent get/read`」从 timeout 场景扩到任何停滞怀疑（Issue #129）。
 
 **pig lane 等待语义（pane API，无 named agent）**：pig 完成一轮后 herdr 显示 **done** 而非 idle。**等本轮开始**：`pane send-text` + `pane send-keys enter` 之后**立即** `herdr agent wait <pane> --until working --timeout <MS>`——先 sleep 会错过短 working 窗口；**等本轮结束**：`herdr agent wait <pane> --until done --timeout <MS>`。`--until idle` 只在从未 working 过的初始空闲上可靠，**不得**当完成信号（工作过的空闲上必超时）。
 
