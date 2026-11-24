@@ -58,6 +58,11 @@ const REQUIRED_SINK_SNIPPETS = [
   "_is_dryrun_placeholder",
   "MissingNodeError",
   "archived_suppressed",
+  // Issue #131：GitHub 侧瞬时故障可重试，且错误日志按根因去重不刷屏
+  "_is_transient_error",
+  "TransientGraphQLError",
+  "log_warn",
+  "WARN_DEDUP_WINDOW_SEC",
 ];
 
 function assertEchoContract({
@@ -156,6 +161,8 @@ function selfTest() {
     ["负例 6：移除 stderr 落盘", "attach_log", /attach_log/],
     ["负例 7：移除清理策略", "prune_echo_artifacts", /prune_echo_artifacts/],
     ["负例 8：移除 dry-run 假 id 作废", "_is_dryrun_placeholder", /_is_dryrun_placeholder/],
+    ["负例 9：移除瞬时故障判定", "_is_transient_error", /_is_transient_error/],
+    ["负例 10：移除错误日志去重", "log_warn", /log_warn/],
   ]) {
     assert.throws(
       () =>
@@ -425,6 +432,43 @@ function selfTest() {
     assert.ok(
       existsSync(join(sessStateDir, "keep.json")),
       "Discussion 状态（幂等依据）不得被清理——删了会重复建帖",
+    );
+
+    // (h) Issue #131：GitHub 侧瞬时故障须可重试（不因单次 5xx 让整轮同步失败）
+    const fakeBin2 = join(scratch, "bin2");
+    mkdirSync(fakeBin2, { recursive: true });
+    const counterFile = join(fakeBin2, "n");
+    writeFileSync(
+      join(fakeBin2, "gh"),
+      [
+        "#!/usr/bin/env bash",
+        'n=$(cat "$(dirname "$0")/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$(dirname "$0")/n"',
+        'if [ "$n" -lt 3 ]; then echo "gh: Something went wrong while executing your query on 2026-11-23T10:19:26Z." >&2; exit 1; fi',
+        'echo \'{"data":{"viewer":{"login":"ok"}}\}\'',
+      ].join("\n") + "\n",
+    );
+    chmodSync(join(fakeBin2, "gh"), 0o755);
+    const rTransient = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import importlib.util, sys",
+          `spec = importlib.util.spec_from_file_location("sink", ${JSON.stringify(join(REPO, "scripts", "echo-discussion-sink.py"))})`,
+          "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+          'print(m.gh_graphql("query { viewer { login } }", {}, dry_run=False, retries=3, backoff_sec=0.05))',
+        ].join("; "),
+      ],
+      { env: { ...envDry, PATH: `${fakeBin2}:${process.env.PATH ?? ""}` }, encoding: "utf8" },
+    );
+    assert.equal(rTransient.status, 0, rTransient.stderr);
+    assert.ok(
+      rTransient.stdout.includes("'login': 'ok'") || rTransient.stdout.includes('"login": "ok"'),
+      `瞬时故障重试后应成功（实际输出：${rTransient.stdout.slice(0, 200)}）`,
+    );
+    assert.ok(
+      !existsSync(counterFile) || Number(readFileSync(counterFile, "utf8").trim()) >= 3,
+      "须真的重试过（不是一次就过）",
     );
 
     console.log(

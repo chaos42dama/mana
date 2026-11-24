@@ -275,6 +275,7 @@ MANA_AUTONOMOUS=1 omp         # 自主 run 的启动形态
 - `MANA_ECHO_MAX_FILE_BYTES` — `--watch-repo` 单个 session JSONL 的体积上限（默认 `256MiB`；超限文件直接跳过，不解析）
 - `MANA_ECHO_LOG_DIR` — echo 守护 stderr 日志目录（默认 `~/.omp/agent/state/mana/echo/`；守护被三处以 `>/dev/null 2>&1` 拉起，异常一律落此目录，不静默）
 - `MANA_ECHO_PRUNE_INTERVAL_SEC` — 守护内清理 echo 产物的周期（默认 `3600` 秒）
+- `MANA_ECHO_WARN_DEDUP_SEC` — 同一根因的错误日志去重窗口（默认 `300` 秒；GitHub 侧瞬时故障还会自动重试 2 次）
 - `MANA_LANE_ALLOW_PATHS` — 工人 lane 允许写入的路径 glob/前缀白名单（`mana-worker.ts` 事前拦截越界 `write/edit`）
 
 ### 关键扩展（`extensions/pi/`）
